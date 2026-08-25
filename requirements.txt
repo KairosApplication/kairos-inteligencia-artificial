@@ -1,0 +1,7 @@
+langchain
+langgraph
+langchain-groq
+langchain-huggingface
+langchain-google-genai
+python-dotenv
+sentence-transformers
