@@ -5,3 +5,4 @@ langchain-huggingface
 langchain-google-genai
 python-dotenv
 sentence-transformers
+psycopg2-binary
