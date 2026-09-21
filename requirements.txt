@@ -1,8 +1,10 @@
 langchain
 langgraph
-langchain-groq
+langchain-groq>=1.1.3
 langchain-huggingface
 langchain-google-genai
 python-dotenv
+pymongo
+certifi
 sentence-transformers
 psycopg2-binary
