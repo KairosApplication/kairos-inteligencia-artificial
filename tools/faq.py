@@ -55,4 +55,4 @@ def faq_retriever(question: str) -> str:
     
     return "\n\n".join(textos)
 
-FAQ_TOOLS = [create_faq_database, faq_retriever]
+FAQ_TOOLS = [faq_retriever]
