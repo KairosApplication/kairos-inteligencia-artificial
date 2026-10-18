@@ -107,7 +107,7 @@ def localizar_cliente(
             u.name,
             u.last_name,
             u.email
-        FROM customer c
+        FROM customers c
         JOIN users u ON u.id = c.users_id
         WHERE (%(nome)s IS NULL OR (u.name || ' ' || u.last_name) ILIKE %(nome)s)
           AND (%(email)s IS NULL OR u.email ILIKE %(email)s)
@@ -167,7 +167,7 @@ def consultar_historico_compras_cliente(
     dias = _normalizar_intervalo(dias, DIAS_PADRAO_HISTORICO, DIAS_MAXIMO_HISTORICO)
     limite = _normalizar_intervalo(limite, LIMITE_PADRAO_RESULTADOS, LIMITE_MAXIMO_RESULTADOS)
 
-    sql_cliente = "SELECT 1 FROM customer WHERE id = %(customer_id)s LIMIT 1"
+    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
 
     sql_historico = """
         SELECT
@@ -177,10 +177,10 @@ def consultar_historico_compras_cliente(
             SUM(pp.amount::numeric) AS valor_total,
             COUNT(DISTINCT p.id) AS numero_pedidos,
             MAX(p.date) AS ultima_compra
-        FROM purchase p
-        JOIN purchase_product pp ON pp.purchase_id = p.id
-        JOIN product pr ON pr.id = pp.product_id
-        LEFT JOIN category cat ON cat.id = pr.category_id
+        FROM purchases p
+        JOIN purchase_products pp ON pp.purchase_id = p.id
+        JOIN products pr ON pr.id = pp.product_id
+        LEFT JOIN categories cat ON cat.id = pr.category_id
         WHERE p.customer_id = %(customer_id)s
           AND p.status = %(status_concluido)s
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
@@ -246,20 +246,20 @@ def sugerir_ofertas_personalizadas(
     """
     limite = _normalizar_intervalo(limite, 10, LIMITE_MAXIMO_RESULTADOS)
 
-    sql_cliente = "SELECT 1 FROM customer WHERE id = %(customer_id)s LIMIT 1"
+    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
 
     sql_ofertas = """
         WITH produtos_cliente AS (
             SELECT DISTINCT pp.product_id
-            FROM purchase p
-            JOIN purchase_product pp ON pp.purchase_id = p.id
+            FROM purchases p
+            JOIN purchase_products pp ON pp.purchase_id = p.id
             WHERE p.customer_id = %(customer_id)s
               AND p.status = %(status_concluido)s
         ),
         categorias_cliente AS (
             SELECT DISTINCT pr.category_id
             FROM produtos_cliente pc
-            JOIN product pr ON pr.id = pc.product_id
+            JOIN products pr ON pr.id = pc.product_id
             WHERE pr.category_id IS NOT NULL
         )
         SELECT
@@ -270,9 +270,9 @@ def sugerir_ofertas_personalizadas(
             promo.promotion_end_date,
             pr.price::numeric AS preco_atual,
             (promo.product_id IN (SELECT product_id FROM produtos_cliente)) AS mesmo_produto
-        FROM promotion promo
-        LEFT JOIN product pr ON pr.id = promo.product_id
-        LEFT JOIN category cat ON cat.id = pr.category_id
+        FROM promotions promo
+        LEFT JOIN products pr ON pr.id = promo.product_id
+        LEFT JOIN categories cat ON cat.id = pr.category_id
         WHERE now() BETWEEN promo.promotion_start_date AND promo.promotion_end_date
           AND (
                 promo.product_id IN (SELECT product_id FROM produtos_cliente)

@@ -1,3 +1,4 @@
+import statistics
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -7,20 +8,42 @@ from data.postgres import get_connection, release_connection
 
 load_dotenv()
 
-# Faixas de severidade utilizadas para classificar o risco de ruptura
-# de um produto em uma gôndola, com base no percentual de ocupação:
-#
-#   percentual_ocupacao = quantidade_atual / capacidade_maxima_da_gondola
-#
-# quantidade_atual == 0            -> "ruptura"
-# percentual <= LIMITE_CRITICO     -> "crítico"
-# percentual <= LIMITE_BAIXO       -> "baixo"
-# percentual > LIMITE_BAIXO        -> "adequado"
-LIMITE_CRITICO = 0.2
-LIMITE_BAIXO = 0.5
-
 LIMITE_PADRAO_RESULTADOS = 20
 LIMITE_MAXIMO_RESULTADOS = 50
+
+
+def _calcular_cortes_severidade(percentuais: list[float]) -> tuple[float, float]:
+    """
+    Calcula, a partir da distribuição real de percentuais de ocupação
+    observada na própria consulta (produtos/gôndolas que casaram com
+    os filtros informados), os cortes de severidade "crítico" e
+    "baixo" a serem usados por `_classificar_severidade`.
+
+    Em vez de um corte universal fixo (ex.: "crítico é sempre abaixo
+    de 20% de ocupação"), os cortes são os percentis 20 e 50 da
+    distribuição observada: um item é "crítico" quando está entre os
+    20% com menor ocupação dentre os encontrados, e "baixo" quando
+    está entre os 50% com menor ocupação. Isso faz a classificação se
+    adaptar ao padrão real de estoque do conjunto consultado (uma
+    loja/setor com ocupação geralmente alta terá um corte de
+    "crítico" mais exigente do que um setor com ocupação
+    historicamente mais baixa).
+
+    Quando a amostra é pequena demais para que percentis façam
+    sentido, cai em um fallback fixo conservador (20%/50%), já que
+    não há dados suficientes para inferir a distribuição local. Menos
+    de 5 pontos não é suficiente para um percentil 20 ter qualquer
+    significado (o próprio ponto de corte cairia exatamente sobre um
+    dos valores observados, não entre eles).
+    """
+    if len(percentuais) < 5:
+        return 0.2, 0.5
+
+    percentil_20, percentil_50 = statistics.quantiles(
+        percentuais, n=10, method="inclusive"
+    )[1], statistics.median(percentuais)
+
+    return percentil_20, percentil_50
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
@@ -42,10 +65,14 @@ def _executar_consulta(sql: str, params: dict) -> list:
         release_connection(conn)
 
 
-def _classificar_severidade(quantidade: int, percentual: Optional[float]) -> str:
+def _classificar_severidade(
+    quantidade: int, percentual: Optional[float], corte_critico: float, corte_baixo: float
+) -> str:
     """
     Classifica o risco de ruptura de um item com base na quantidade
-    atual e no percentual de ocupação da gôndola.
+    atual e no percentual de ocupação da gôndola, usando os cortes de
+    severidade calculados para a consulta atual (ver
+    `_calcular_cortes_severidade`).
     """
     if quantidade == 0:
         return "ruptura"
@@ -53,10 +80,10 @@ def _classificar_severidade(quantidade: int, percentual: Optional[float]) -> str
     if percentual is None:
         return "indefinido"
 
-    if percentual <= LIMITE_CRITICO:
+    if percentual <= corte_critico:
         return "crítico"
 
-    if percentual <= LIMITE_BAIXO:
+    if percentual <= corte_baixo:
         return "baixo"
 
     return "adequado"
@@ -95,6 +122,42 @@ def _formatar_percentual(percentual) -> str:
     return f"{percentual * 100:.0f}%"
 
 
+def _distribuicao_ocupacao(produto: Optional[str], setor: Optional[str]) -> list[float]:
+    """
+    Busca o percentual de ocupação de todas as gôndolas que casam com
+    os filtros de produto/setor informados (sem o LIMIT aplicado na
+    listagem exibida ao usuário), para servir de base ao cálculo dos
+    cortes de severidade em `_calcular_cortes_severidade`.
+
+    Precisa ser uma consulta separada da listagem principal: se os
+    percentis fossem calculados sobre os mesmos resultados já
+    truncados por LIMIT (e ordenados do menor para o maior
+    percentual), a amostra seria sistematicamente viesada para baixo,
+    inflando artificialmente a quantidade de itens classificados como
+    "crítico".
+    """
+    sql = """
+        SELECT
+            ROUND(
+                ps.product_quantity::numeric
+                / NULLIF(s.maximum_capacity, 0),
+                4
+            ) AS percentual_ocupacao
+        FROM product_shelves ps
+        JOIN products p ON p.id = ps.product_id
+        JOIN shelves s ON s.id = ps.shelf_id
+        JOIN aisles a ON a.id = s.aisle_id
+        JOIN sectors sec ON sec.id = a.sector_id
+        WHERE (%(produto)s IS NULL OR p.name ILIKE %(produto)s)
+          AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
+          AND ps.product_quantity > 0
+    """
+
+    linhas = _executar_consulta(sql, {"produto": _like(produto), "setor": _like(setor)})
+
+    return [float(percentual) for (percentual,) in linhas if percentual is not None]
+
+
 @tool
 def consultar_niveis_estoque(
     produto: Optional[str] = None,
@@ -131,11 +194,11 @@ def consultar_niveis_estoque(
                 / NULLIF(s.maximum_capacity, 0),
                 2
             ) AS percentual_ocupacao
-        FROM product_shelf ps
-        JOIN product p ON p.id = ps.product_id
-        JOIN shelf s ON s.id = ps.shelf_id
-        JOIN aisle a ON a.id = s.aisle_id
-        JOIN sector sec ON sec.id = a.sector_id
+        FROM product_shelves ps
+        JOIN products p ON p.id = ps.product_id
+        JOIN shelves s ON s.id = ps.shelf_id
+        JOIN aisles a ON a.id = s.aisle_id
+        JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(produto)s IS NULL OR p.name ILIKE %(produto)s)
           AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
         ORDER BY percentual_ocupacao ASC NULLS LAST
@@ -155,12 +218,21 @@ def consultar_niveis_estoque(
     if not linhas:
         return "Nenhum produto encontrado para os filtros informados."
 
+    try:
+        distribuicao = _distribuicao_ocupacao(produto, setor)
+    except Exception:
+        distribuicao = []
+
+    corte_critico, corte_baixo = _calcular_cortes_severidade(distribuicao)
+
     resultados = []
 
     for nome, gondola_id, setor_nome, quantidade, capacidade, percentual in linhas:
         severidade = _classificar_severidade(
             quantidade,
-            float(percentual) if percentual is not None else None
+            float(percentual) if percentual is not None else None,
+            corte_critico,
+            corte_baixo
         )
 
         if somente_criticos and severidade not in ("crítico", "ruptura"):
@@ -208,11 +280,11 @@ def listar_alertas_reposicao(
             p.name AS produto,
             s.id AS gondola_id,
             sec.name AS setor
-        FROM alert al
-        JOIN shelf s ON s.id = al.shelf_id
-        JOIN aisle a ON a.id = s.aisle_id
-        JOIN sector sec ON sec.id = a.sector_id
-        LEFT JOIN product p ON p.id = al.product_id
+        FROM alerts al
+        JOIN shelves s ON s.id = al.shelf_id
+        JOIN aisles a ON a.id = s.aisle_id
+        JOIN sectors sec ON sec.id = a.sector_id
+        LEFT JOIN products p ON p.id = al.product_id
         WHERE (%(pendentes)s = FALSE OR al.resolution_date IS NULL)
           AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
         ORDER BY al.stockout_date DESC NULLS LAST
@@ -279,16 +351,16 @@ def recomendar_prioridades_reposicao(
             ) AS percentual_ocupacao,
             EXISTS (
                 SELECT 1
-                FROM alert al
+                FROM alerts al
                 WHERE al.shelf_id = s.id
                   AND (al.product_id = p.id OR al.product_id IS NULL)
                   AND al.resolution_date IS NULL
             ) AS alerta_ativo
-        FROM product_shelf ps
-        JOIN product p ON p.id = ps.product_id
-        JOIN shelf s ON s.id = ps.shelf_id
-        JOIN aisle a ON a.id = s.aisle_id
-        JOIN sector sec ON sec.id = a.sector_id
+        FROM product_shelves ps
+        JOIN products p ON p.id = ps.product_id
+        JOIN shelves s ON s.id = ps.shelf_id
+        JOIN aisles a ON a.id = s.aisle_id
+        JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
         ORDER BY alerta_ativo DESC, percentual_ocupacao ASC NULLS LAST
         LIMIT %(limite)s
@@ -306,6 +378,13 @@ def recomendar_prioridades_reposicao(
     if not linhas:
         return "Nenhum item encontrado para os filtros informados."
 
+    try:
+        distribuicao = _distribuicao_ocupacao(None, setor)
+    except Exception:
+        distribuicao = []
+
+    corte_critico, corte_baixo = _calcular_cortes_severidade(distribuicao)
+
     resultados = []
 
     for posicao, linha in enumerate(linhas, start=1):
@@ -313,7 +392,9 @@ def recomendar_prioridades_reposicao(
 
         severidade = _classificar_severidade(
             quantidade,
-            float(percentual) if percentual is not None else None
+            float(percentual) if percentual is not None else None,
+            corte_critico,
+            corte_baixo
         )
 
         alerta_texto = " | Alerta ativo" if alerta_ativo else ""

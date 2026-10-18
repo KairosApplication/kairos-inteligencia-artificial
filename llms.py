@@ -2,7 +2,6 @@ import os
 
 from langchain_groq import ChatGroq
 
-from config import RESUMO_GATILHO_MENSAGENS, RESUMO_MANTER_MENSAGENS
 from data.conversation_middleware import MongoSummarizationMiddleware
 from schemas import AvaliacaoGuardrail, AvaliacaoJuiz, ExtracaoMemoria
 
@@ -62,9 +61,21 @@ extrator_memoria = llm_rapido.with_structured_output(
 # MIDDLEWARE DE SUMARIZAÇÃO COM MEMÓRIA DE LONGO PRAZO
 #
 # Cada agente especialista recebe sua própria instância do
-# middleware. Ele monitora o histórico de mensagens de cada execução
-# e, ao atingir o gatilho configurado em `trigger`, substitui as
-# mensagens mais antigas por um resumo gerado pelo `llm_rapido`.
+# middleware. Diferente do uso convencional do SummarizationMiddleware
+# (que só resume depois de um grande volume acumulado de mensagens ou
+# tokens), aqui a sumarização é incremental: ocorre a cada turno em
+# que já existir pelo menos uma mensagem anterior no contexto
+# carregado do MongoDB, incorporando a interação recém-concluída ao
+# resumo. `keep=("messages", 1)` mantém de fora do resumo somente a
+# mensagem mais recente (a pergunta atual do usuário, que ainda não
+# tem resposta no momento em que o middleware roda); todo o restante
+# do histórico carregado é incorporado ao resumo acumulado.
+#
+# `trigger=("messages", 2)` dispara a sumarização a partir do momento
+# em que há pelo menos 2 mensagens no contexto do turno (ex.: um
+# resumo anterior + a pergunta atual, ou uma mensagem de histórico +
+# a pergunta atual) — ou seja, em praticamente todo turno que não seja
+# o primeiro de uma conversa.
 #
 # O `MongoSummarizationMiddleware` (ver data/conversation_middleware.py)
 # estende esse comportamento padrão do LangChain para também persistir
@@ -72,6 +83,6 @@ extrator_memoria = llm_rapido.with_structured_output(
 # `MemoryContext` fornecido em `context` no momento do `invoke`.
 resumo_middleware = MongoSummarizationMiddleware(
     model=llm_rapido,
-    trigger=("messages", RESUMO_GATILHO_MENSAGENS),
-    keep=("messages", RESUMO_MANTER_MENSAGENS)
+    trigger=("messages", 2),
+    keep=("messages", 1)
 )

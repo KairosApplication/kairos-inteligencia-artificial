@@ -31,9 +31,7 @@ def _agora_dt() -> datetime:
 # `conversations` do banco `kairos_ai`).
 USUARIO_PADRAO_ID = 1
 
-# Limiares do SummarizationMiddleware. Intencionalmente baixos para
-# que a sumarização seja fácil de observar durante os testes; em um
-# ambiente real esses valores tendem a ser maiores (ex.: na faixa de
-# várias dezenas de mensagens ou milhares de tokens).
-RESUMO_GATILHO_MENSAGENS = 10
-RESUMO_MANTER_MENSAGENS = 4
+# O gatilho/retenção do SummarizationMiddleware não são mais valores
+# fixos configurados aqui: a sumarização agora é incremental (roda a
+# cada turno, incorporando a interação recém-concluída ao resumo
+# acumulado). Ver `resumo_middleware` em llms.py.
