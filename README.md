@@ -56,6 +56,7 @@ As verificações de sintaxe não substituem testes de integração.
 
 ## Versionamento
 
-Novas funcionalidades começam em branches codex/ com escopo descritivo.
+Use branches feat/, fix/ e chore/ com escopo descritivo. Cada nova funcionalidade
+começa em sua própria branch.
 Use commits Conventional Commits e PRs para main, respeitando as revisões e
 checks existentes. Não faça force-push nem reescreva o histórico compartilhado.
