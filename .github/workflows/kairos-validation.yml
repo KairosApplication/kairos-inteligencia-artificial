@@ -22,7 +22,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install validation tools
-        run: python -m pip install PyYAML==6.0.2 sqlglot==26.33.0
+        run: python -m pip install -r requirements-dev.txt
       - name: Validate repository
         run: |
           python .github/scripts/validate.py
+      - name: Run offline regression tests
+        run: python -m pytest -q

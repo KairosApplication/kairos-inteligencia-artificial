@@ -1,58 +1,75 @@
-import os
-from dotenv import load_dotenv
+"""FAQ com embeddings OpenAI e cache local sem desserialização de pickle."""
+import hashlib
+import json
+import sqlite3
+from functools import lru_cache
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.tools import tool
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import FAISS
+from langchain_core.embeddings import Embeddings
+from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-load_dotenv()
+from config import settings
 
-PDF_PATH = "data/FAQ_Kairos.pdf"
 
-# Criação do banco vetorial
+class CachedEmbeddings(Embeddings):
+    """Cache por texto e modelo; armazena somente vetores JSON em SQLite."""
+    def __init__(self, delegate, path, namespace):
+        self.delegate = delegate
+        self.path = path
+        self.namespace = namespace
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(path) as db:
+            db.execute("CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, vector TEXT NOT NULL)")
+
+    def _key(self, text):
+        return hashlib.sha256(json.dumps([self.namespace, text]).encode()).hexdigest()
+
+    def embed_documents(self, texts):
+        with sqlite3.connect(self.path) as db:
+            cached = [db.execute("SELECT vector FROM embeddings WHERE key = ?", (self._key(t),)).fetchone() for t in texts]
+            missing = [i for i, row in enumerate(cached) if row is None]
+            if missing:
+                vectors = self.delegate.embed_documents([texts[i] for i in missing])
+                if len(vectors) != len(missing):
+                    raise ValueError("Quantidade inesperada de embeddings retornados.")
+                for i, vector in zip(missing, vectors):
+                    serialized = json.dumps(vector)
+                    db.execute("INSERT OR REPLACE INTO embeddings VALUES (?, ?)", (self._key(texts[i]), serialized))
+                    cached[i] = (serialized,)
+            return [json.loads(row[0]) for row in cached]
+
+    def embed_query(self, text):
+        return self.embed_documents([text])[0]
+
+
+@lru_cache(maxsize=1)
 def create_faq_database():
-    """
-    Realiza a criação do banco vetorial para armazenar o documento FAQ.
-    Por último, retorna o banco vetorial criado.
-    """
-    loader = PyPDFLoader(PDF_PATH)
-    docs = loader.load()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,
-        chunk_overlap=50
+    docs = PyPDFLoader(str(settings.faq_pdf_path)).load()
+    chunks = RecursiveCharacterTextSplitter(
+        chunk_size=settings.faq_chunk_size, chunk_overlap=settings.faq_chunk_overlap,
+    ).split_documents(docs)
+    embeddings = CachedEmbeddings(
+        OpenAIEmbeddings(model=settings.openai_embedding_model, max_retries=2,
+                         request_timeout=settings.llm_timeout_seconds),
+        settings.faq_cache_path, settings.openai_embedding_model,
     )
-    
-    chunks = splitter.split_documents(docs)
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="gemini-embedding-2-preview",
-        google_api_key=os.getenv("GOOGLE_API_KEY")
-    )
-    
-    db = FAISS.from_documents(
-        chunks,
-        embeddings
-    )
-    return db
+    return FAISS.from_documents(chunks, embeddings)
 
-faq_db = create_faq_database()
 
 @tool
 def faq_retriever(question: str) -> str:
-    """
-    Busca na base de conhecimento do FAQ do Kairos
-    os trechos mais relevantes para responder à pergunta.
-    """
-    results = faq_db.max_marginal_relevance_search(
-        question,
-        k=4,
-        fetch_k=10,
-        lambda_mult=0.7
+    """Busca trechos relevantes da documentação Kairos com sua página de origem."""
+    results = create_faq_database().max_marginal_relevance_search(
+        question, k=settings.faq_k, fetch_k=settings.faq_fetch_k,
+        lambda_mult=settings.faq_lambda_mult,
+    )
+    return "\n\n".join(
+        f"[Fonte: FAQ Kairos, página {result.metadata.get('page', 0) + 1}]\n{result.page_content}"
+        for result in results
     )
 
-    textos = [result.page_content for result in results]
-    
-    return "\n\n".join(textos)
 
 FAQ_TOOLS = [faq_retriever]
