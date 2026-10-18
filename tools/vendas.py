@@ -1,20 +1,20 @@
 import statistics
 from typing import Optional
 
-from dotenv import load_dotenv
+from config import settings
+
 from langchain.tools import tool
 
-from data.postgres import get_connection, release_connection
+from data.postgres import executar_consulta
 
-load_dotenv()
 
 # Status que representa uma compra efetivamente concluída.
 # IN_PROGRESS e CANCELLED não são consideradas venda para fins de
 # análise de demanda.
 STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
-LIMITE_PADRAO_RESULTADOS = 20
-LIMITE_MAXIMO_RESULTADOS = 50
+LIMITE_PADRAO_RESULTADOS = settings.limite_padrao_resultados
+LIMITE_MAXIMO_RESULTADOS = settings.limite_maximo_resultados
 
 DIAS_PADRAO_HISTORICO = 30
 DIAS_MAXIMO_HISTORICO = 365
@@ -27,22 +27,7 @@ SEMANAS_MAXIMA_PREVISAO = 12
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
-    """
-    Executa uma consulta SQL de leitura utilizando uma conexão obtida
-    do pool de conexões, garantindo que a conexão seja liberada de
-    volta ao pool ao final, mesmo em caso de erro.
-    """
-    conn = get_connection()
-
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        linhas = cur.fetchall()
-        cur.close()
-        return linhas
-
-    finally:
-        release_connection(conn)
+    return executar_consulta(sql, params)
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
@@ -87,7 +72,7 @@ def _serie_semanal_vendas(
         WITH semanas_periodo AS (
             SELECT generate_series(
                 DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week')),
-                DATE_TRUNC('week', now()),
+                DATE_TRUNC('week', now()) - INTERVAL '1 week',
                 INTERVAL '1 week'
             )::date AS semana
         ),
@@ -101,6 +86,7 @@ def _serie_semanal_vendas(
             LEFT JOIN categories c ON c.id = pr.category_id
             WHERE p.status = %(status_concluido)s
               AND p.date >= DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week'))
+              AND p.date < DATE_TRUNC('week', now())
               AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
               AND (%(categoria)s IS NULL OR c.category ILIKE %(categoria)s)
             GROUP BY semana
@@ -117,6 +103,7 @@ def _serie_semanal_vendas(
             quantidade_vendida,
             ROW_NUMBER() OVER (ORDER BY semana) AS indice_semana
         FROM serie
+        WHERE EXISTS (SELECT 1 FROM vendas)
         ORDER BY semana ASC
     """
 
@@ -271,7 +258,7 @@ def consultar_historico_vendas(
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
           AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
           AND (%(categoria)s IS NULL OR c.category ILIKE %(categoria)s)
-        GROUP BY pr.name, c.category
+        GROUP BY pr.id, pr.name, c.category
         ORDER BY quantidade_vendida DESC
         LIMIT %(limite)s
     """
@@ -285,8 +272,8 @@ def consultar_historico_vendas(
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível consultar o histórico de vendas: {erro}"
+    except Exception:
+        return "Não foi possível consultar o histórico de vendas. Tente novamente mais tarde."
 
     if not linhas:
         return f"Nenhuma venda concluída encontrada nos últimos {dias} dias para os filtros informados."
@@ -328,8 +315,8 @@ def analisar_tendencia_vendas(
     try:
         linhas = _serie_semanal_vendas(produto, categoria, semanas)
 
-    except Exception as erro:
-        return f"Não foi possível analisar a tendência de vendas: {erro}"
+    except Exception:
+        return "Não foi possível analisar a tendência de vendas. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum dado de vendas encontrado para o período e filtros informados."
@@ -402,8 +389,8 @@ def prever_demanda_futura(
     try:
         linhas = _serie_semanal_vendas(produto, categoria, semanas_historico)
 
-    except Exception as erro:
-        return f"Não foi possível projetar a demanda: {erro}"
+    except Exception:
+        return "Não foi possível projetar a demanda. Tente novamente mais tarde."
 
     if not linhas:
         return (

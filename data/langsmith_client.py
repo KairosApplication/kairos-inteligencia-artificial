@@ -195,6 +195,8 @@ def buscar_metricas_run(run_id: str) -> Optional[MetricasRun]:
     isso como "métricas indisponíveis por enquanto", sem interromper
     o fluxo do chat.
     """
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return None
     cliente = get_langsmith_client()
 
     for tentativa in range(TENTATIVAS_BUSCA_RUN):

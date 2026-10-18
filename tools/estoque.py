@@ -1,68 +1,20 @@
-import statistics
 from typing import Optional
 
-from dotenv import load_dotenv
+from config import settings
+
 from langchain.tools import tool
 
-from data.postgres import get_connection, release_connection
-
-load_dotenv()
-
-LIMITE_PADRAO_RESULTADOS = 20
-LIMITE_MAXIMO_RESULTADOS = 50
+from data.postgres import executar_consulta
 
 
-def _calcular_cortes_severidade(percentuais: list[float]) -> tuple[float, float]:
-    """
-    Calcula, a partir da distribuição real de percentuais de ocupação
-    observada na própria consulta (produtos/gôndolas que casaram com
-    os filtros informados), os cortes de severidade "crítico" e
-    "baixo" a serem usados por `_classificar_severidade`.
+LIMITE_PADRAO_RESULTADOS = settings.limite_padrao_resultados
+LIMITE_MAXIMO_RESULTADOS = settings.limite_maximo_resultados
 
-    Em vez de um corte universal fixo (ex.: "crítico é sempre abaixo
-    de 20% de ocupação"), os cortes são os percentis 20 e 50 da
-    distribuição observada: um item é "crítico" quando está entre os
-    20% com menor ocupação dentre os encontrados, e "baixo" quando
-    está entre os 50% com menor ocupação. Isso faz a classificação se
-    adaptar ao padrão real de estoque do conjunto consultado (uma
-    loja/setor com ocupação geralmente alta terá um corte de
-    "crítico" mais exigente do que um setor com ocupação
-    historicamente mais baixa).
 
-    Quando a amostra é pequena demais para que percentis façam
-    sentido, cai em um fallback fixo conservador (20%/50%), já que
-    não há dados suficientes para inferir a distribuição local. Menos
-    de 5 pontos não é suficiente para um percentil 20 ter qualquer
-    significado (o próprio ponto de corte cairia exatamente sobre um
-    dos valores observados, não entre eles).
-    """
-    if len(percentuais) < 5:
-        return 0.2, 0.5
-
-    percentil_20, percentil_50 = statistics.quantiles(
-        percentuais, n=10, method="inclusive"
-    )[1], statistics.median(percentuais)
-
-    return percentil_20, percentil_50
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
-    """
-    Executa uma consulta SQL de leitura utilizando uma conexão obtida
-    do pool de conexões, garantindo que a conexão seja liberada de
-    volta ao pool ao final, mesmo em caso de erro.
-    """
-    conn = get_connection()
-
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        linhas = cur.fetchall()
-        cur.close()
-        return linhas
-
-    finally:
-        release_connection(conn)
+    return executar_consulta(sql, params)
 
 
 def _classificar_severidade(
@@ -70,9 +22,8 @@ def _classificar_severidade(
 ) -> str:
     """
     Classifica o risco de ruptura de um item com base na quantidade
-    atual e no percentual de ocupação da gôndola, usando os cortes de
-    severidade calculados para a consulta atual (ver
-    `_calcular_cortes_severidade`).
+    atual e no percentual de ocupação da gôndola, usando os limites
+    operacionais configurados, independentes dos filtros da consulta.
     """
     if quantidade == 0:
         return "ruptura"
@@ -122,40 +73,6 @@ def _formatar_percentual(percentual) -> str:
     return f"{percentual * 100:.0f}%"
 
 
-def _distribuicao_ocupacao(produto: Optional[str], setor: Optional[str]) -> list[float]:
-    """
-    Busca o percentual de ocupação de todas as gôndolas que casam com
-    os filtros de produto/setor informados (sem o LIMIT aplicado na
-    listagem exibida ao usuário), para servir de base ao cálculo dos
-    cortes de severidade em `_calcular_cortes_severidade`.
-
-    Precisa ser uma consulta separada da listagem principal: se os
-    percentis fossem calculados sobre os mesmos resultados já
-    truncados por LIMIT (e ordenados do menor para o maior
-    percentual), a amostra seria sistematicamente viesada para baixo,
-    inflando artificialmente a quantidade de itens classificados como
-    "crítico".
-    """
-    sql = """
-        SELECT
-            ROUND(
-                ps.product_quantity::numeric
-                / NULLIF(s.maximum_capacity, 0),
-                4
-            ) AS percentual_ocupacao
-        FROM product_shelves ps
-        JOIN products p ON p.id = ps.product_id
-        JOIN shelves s ON s.id = ps.shelf_id
-        JOIN aisles a ON a.id = s.aisle_id
-        JOIN sectors sec ON sec.id = a.sector_id
-        WHERE (%(produto)s IS NULL OR p.name ILIKE %(produto)s)
-          AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
-          AND ps.product_quantity > 0
-    """
-
-    linhas = _executar_consulta(sql, {"produto": _like(produto), "setor": _like(setor)})
-
-    return [float(percentual) for (percentual,) in linhas if percentual is not None]
 
 
 @tool
@@ -189,11 +106,8 @@ def consultar_niveis_estoque(
             sec.name AS setor,
             ps.product_quantity AS quantidade_atual,
             s.maximum_capacity AS capacidade_maxima,
-            ROUND(
-                ps.product_quantity::numeric
-                / NULLIF(s.maximum_capacity, 0),
-                2
-            ) AS percentual_ocupacao
+            ps.product_quantity::numeric
+                / NULLIF(s.maximum_capacity, 0) AS percentual_ocupacao
         FROM product_shelves ps
         JOIN products p ON p.id = ps.product_id
         JOIN shelves s ON s.id = ps.shelf_id
@@ -201,6 +115,11 @@ def consultar_niveis_estoque(
         JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(produto)s IS NULL OR p.name ILIKE %(produto)s)
           AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
+          AND (
+              %(somente_criticos)s = FALSE
+              OR ps.product_quantity = 0
+              OR ps.product_quantity::numeric / NULLIF(s.maximum_capacity, 0) <= %(corte_critico)s
+          )
         ORDER BY percentual_ocupacao ASC NULLS LAST
         LIMIT %(limite)s
     """
@@ -209,21 +128,18 @@ def consultar_niveis_estoque(
         linhas = _executar_consulta(sql, {
             "produto": _like(produto),
             "setor": _like(setor),
-            "limite": limite
+            "limite": limite,
+            "somente_criticos": somente_criticos,
+            "corte_critico": settings.estoque_limite_critico
         })
 
-    except Exception as erro:
-        return f"Não foi possível consultar os níveis de estoque: {erro}"
+    except Exception:
+        return "Não foi possível consultar os níveis de estoque. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum produto encontrado para os filtros informados."
 
-    try:
-        distribuicao = _distribuicao_ocupacao(produto, setor)
-    except Exception:
-        distribuicao = []
-
-    corte_critico, corte_baixo = _calcular_cortes_severidade(distribuicao)
+    corte_critico, corte_baixo = settings.estoque_limite_critico, settings.estoque_limite_baixo
 
     resultados = []
 
@@ -298,8 +214,8 @@ def listar_alertas_reposicao(
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível consultar os alertas de reposição: {erro}"
+    except Exception:
+        return "Não foi possível consultar os alertas de reposição. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum alerta encontrado para os filtros informados."
@@ -328,8 +244,8 @@ def recomendar_prioridades_reposicao(
     Recomenda prioridades de reposição com base no nível de estoque
     e na existência de alertas de ruptura ativos.
 
-    Itens com alerta ativo são priorizados. Entre os demais, a
-    prioridade segue o menor percentual de ocupação da gôndola.
+    Rupturas precedem níveis críticos e baixos. Alertas ativos e
+    menor ocupação desempatarão itens da mesma faixa de severidade.
 
     Parâmetros:
         setor: filtra pelo nome (ou parte do nome) do setor da loja.
@@ -344,11 +260,8 @@ def recomendar_prioridades_reposicao(
             sec.name AS setor,
             ps.product_quantity AS quantidade_atual,
             s.maximum_capacity AS capacidade_maxima,
-            ROUND(
-                ps.product_quantity::numeric
-                / NULLIF(s.maximum_capacity, 0),
-                2
-            ) AS percentual_ocupacao,
+            ps.product_quantity::numeric
+                / NULLIF(s.maximum_capacity, 0) AS percentual_ocupacao,
             EXISTS (
                 SELECT 1
                 FROM alerts al
@@ -362,28 +275,32 @@ def recomendar_prioridades_reposicao(
         JOIN aisles a ON a.id = s.aisle_id
         JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
-        ORDER BY alerta_ativo DESC, percentual_ocupacao ASC NULLS LAST
+        ORDER BY
+            CASE
+                WHEN ps.product_quantity = 0 THEN 0
+                WHEN ps.product_quantity::numeric / NULLIF(s.maximum_capacity, 0) <= %(corte_critico)s THEN 1
+                WHEN ps.product_quantity::numeric / NULLIF(s.maximum_capacity, 0) <= %(corte_baixo)s THEN 2
+                ELSE 3
+            END,
+            alerta_ativo DESC, percentual_ocupacao ASC NULLS LAST
         LIMIT %(limite)s
     """
 
     try:
         linhas = _executar_consulta(sql, {
             "setor": _like(setor),
-            "limite": limite
+            "limite": limite,
+            "corte_critico": settings.estoque_limite_critico,
+            "corte_baixo": settings.estoque_limite_baixo
         })
 
-    except Exception as erro:
-        return f"Não foi possível gerar as recomendações de reposição: {erro}"
+    except Exception:
+        return "Não foi possível gerar as recomendações de reposição. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum item encontrado para os filtros informados."
 
-    try:
-        distribuicao = _distribuicao_ocupacao(None, setor)
-    except Exception:
-        distribuicao = []
-
-    corte_critico, corte_baixo = _calcular_cortes_severidade(distribuicao)
+    corte_critico, corte_baixo = settings.estoque_limite_critico, settings.estoque_limite_baixo
 
     resultados = []
 

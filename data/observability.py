@@ -22,6 +22,7 @@ complementando o histórico de conversa já tratado por
 """
 
 import threading
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -29,6 +30,8 @@ from bson import ObjectId
 
 from data.langsmith_client import buscar_metricas_run
 from data.mongodb import get_database
+
+logger = logging.getLogger(__name__)
 
 NOME_EXECUCOES = "ai_executions"
 NOME_TRACES = "agent_traces"
@@ -224,7 +227,11 @@ def _completar_metricas_em_segundo_plano(
     principal terminar antes de uma atualização concluir, essa thread
     é descartada silenciosamente, sem impedir o encerramento do chat.
     """
-    metricas = buscar_metricas_run(langsmith_run_id)
+    try:
+        metricas = buscar_metricas_run(langsmith_run_id)
+    except Exception:
+        logger.debug("Métricas LangSmith indisponíveis.", exc_info=True)
+        return
 
     if metricas is None:
         # Métricas indisponíveis mesmo após as tentativas de
@@ -271,11 +278,18 @@ def _atualizar_custo_execucao(execution_id: ObjectId) -> None:
     colecao_traces = get_database()[NOME_TRACES]
 
     traces = list(colecao_traces.find({"execution_id": execution_id}))
-    custo_total = sum(trace.get("estimated_cost_usd") or 0 for trace in traces)
+    traces_modelo = [trace for trace in traces if trace.get("langsmith_run_id")]
+    completo = all(trace.get("estimated_cost_usd") is not None for trace in traces_modelo)
+    custo_conhecido = sum(trace.get("estimated_cost_usd") or 0 for trace in traces_modelo)
+    custo_total = round(custo_conhecido, 6) if completo else None
 
     colecao_execucoes.update_one(
         {"_id": execution_id},
-        {"$set": {"estimated_cost_usd": round(custo_total, 6)}}
+        {"$set": {
+            "estimated_cost_usd": custo_total,
+            "known_cost_usd": round(custo_conhecido, 6),
+            "cost_complete": completo,
+        }}
     )
 
 
@@ -318,8 +332,8 @@ def registrar_avaliacao_juiz(execution_id: ObjectId, aprovado: bool, motivo: str
         "execution_id": execution_id,
         "judge_agent": "JUDGE_AGENT",
         "score": 1.0 if aprovado else 0.0,
-        "hallucination_detected": not aprovado,
-        "grounded": aprovado,
+        "hallucination_detected": None,
+        "grounded": True if aprovado else None,
         "decision": "APPROVED" if aprovado else "REJECTED",
         "justification": motivo,
         "created_at": _agora()

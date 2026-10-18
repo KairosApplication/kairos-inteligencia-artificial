@@ -21,3 +21,15 @@ def test_modelo_novo_nao_reutiliza_vetor_antigo(tmp_path):
     assert CachedEmbeddings(delegate, path, "a").embed_query("texto") == [1.0]
     assert CachedEmbeddings(delegate, path, "b").embed_query("texto") == [2.0]
     assert delegate.embed_documents.call_count == 2
+
+
+def test_busca_faq_informa_fonte_e_pagina(monkeypatch):
+    from langchain_core.documents import Document
+    from tools import faq
+    db = Mock()
+    db.max_marginal_relevance_search.return_value = [
+        Document(page_content="O repositor confirma a reposição por escaneamento.", metadata={"page": 1})]
+    monkeypatch.setattr(faq, "create_faq_database", lambda: db)
+    result = faq.faq_retriever.invoke({"question": "Como confirmar a reposição?"})
+    assert "[Fonte: FAQ Kairos, página 2]" in result
+    assert "escaneamento" in result

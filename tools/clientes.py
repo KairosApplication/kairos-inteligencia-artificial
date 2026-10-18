@@ -1,40 +1,25 @@
 import re
 from typing import Optional
 
-from dotenv import load_dotenv
+from config import settings
+
 from langchain.tools import tool
 
-from data.postgres import get_connection, release_connection
+from data.postgres import executar_consulta
 
-load_dotenv()
 
 # Status que representa uma compra efetivamente concluída.
 STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
-LIMITE_PADRAO_RESULTADOS = 20
-LIMITE_MAXIMO_RESULTADOS = 50
+LIMITE_PADRAO_RESULTADOS = settings.limite_padrao_resultados
+LIMITE_MAXIMO_RESULTADOS = settings.limite_maximo_resultados
 
 DIAS_PADRAO_HISTORICO = 180
 DIAS_MAXIMO_HISTORICO = 730
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
-    """
-    Executa uma consulta SQL de leitura utilizando uma conexão obtida
-    do pool de conexões, garantindo que a conexão seja liberada de
-    volta ao pool ao final, mesmo em caso de erro.
-    """
-    conn = get_connection()
-
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        linhas = cur.fetchall()
-        cur.close()
-        return linhas
-
-    finally:
-        release_connection(conn)
+    return executar_consulta(sql, params)
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
@@ -45,7 +30,8 @@ def _like(valor: Optional[str]) -> Optional[str]:
     if not valor or not valor.strip():
         return None
 
-    return f"%{valor.strip()}%"
+    literal = valor.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{literal}%"
 
 
 def _normalizar_cpf(cpf: Optional[str]) -> Optional[str]:
@@ -96,7 +82,12 @@ def localizar_cliente(
         cpf: CPF do cliente, com ou sem pontuação.
         limite: quantidade máxima de clientes retornados.
     """
-    if not (nome or email or cpf):
+    nome_normalizado = _like(nome)
+    email_normalizado = _like(email)
+    cpf_normalizado = _normalizar_cpf(cpf)
+    if cpf and cpf.strip() and (cpf_normalizado is None or len(cpf_normalizado) != 11):
+        return "Informe um CPF com 11 dígitos."
+    if not (nome_normalizado or email_normalizado or cpf_normalizado):
         return "Informe ao menos um filtro: nome, email ou cpf."
 
     limite = _normalizar_intervalo(limite, LIMITE_PADRAO_RESULTADOS, LIMITE_MAXIMO_RESULTADOS)
@@ -118,14 +109,14 @@ def localizar_cliente(
 
     try:
         linhas = _executar_consulta(sql, {
-            "nome": _like(nome),
-            "email": _like(email),
-            "cpf": _normalizar_cpf(cpf),
+            "nome": nome_normalizado,
+            "email": email_normalizado,
+            "cpf": cpf_normalizado,
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível localizar o cliente: {erro}"
+    except Exception:
+        return "Não foi possível localizar o cliente. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum cliente encontrado para os filtros informados."
@@ -202,8 +193,8 @@ def consultar_historico_compras_cliente(
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível consultar o histórico do cliente: {erro}"
+    except Exception:
+        return "Não foi possível consultar o histórico do cliente. Tente novamente mais tarde."
 
     if not linhas:
         return f"O cliente {customer_id} não possui compras concluídas nos últimos {dias} dias."
@@ -294,8 +285,8 @@ def sugerir_ofertas_personalizadas(
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível gerar as ofertas personalizadas: {erro}"
+    except Exception:
+        return "Não foi possível gerar as ofertas personalizadas. Tente novamente mais tarde."
 
     if not linhas:
         return (

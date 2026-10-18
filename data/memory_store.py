@@ -3,8 +3,8 @@ Memória de longo prazo do Kairos.
 
 Este módulo é responsável por carregar e persistir o histórico de
 conversas por usuário na coleção `conversations` do banco `kairos_ai`
-no MongoDB, incluindo os resumos gerados pelo SummarizationMiddleware
-do LangChain (ver `data/conversation_middleware.py`).
+no MongoDB, incluindo os resumos produzidos por compactação de turnos aprovados
+(ver `data/conversation_middleware.py`).
 
 Como o histórico é armazenado no MongoDB (e não apenas em memória do
 processo Python), a conversa é retomada mesmo depois que o chat de
@@ -21,13 +21,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from data.mongodb import get_database
 
 NOME_COLECAO = "conversations"
-
-# Quantidade de mensagens brutas (ainda não cobertas por um resumo)
-# recarregadas do histórico a cada novo turno, além do resumo, quando
-# existir. Mantém o contexto recente disponível para o agente sem
-# depender exclusivamente do resumo.
-JANELA_MENSAGENS_RECENTES = 12
-
 
 def _agora() -> str:
     """
@@ -87,18 +80,15 @@ def carregar_mensagens_contexto(conversa: dict) -> list[BaseMessage]:
     """
     Reconstrói, a partir da conversa armazenada, a lista de mensagens
     LangChain utilizada como contexto inicial de um novo turno: o
-    resumo (se existir) seguido da janela de mensagens brutas mais
-    recentes ainda não cobertas por um resumo.
+    resumo (se existir) seguido de todas as mensagens brutas ainda
+    não cobertas por um resumo. A compactação ocorre antes desta leitura.
     """
     mensagens: list[BaseMessage] = []
 
     resumo = conversa.get("summary")
 
     if resumo:
-        # Reutiliza o mesmo formato de mensagem produzido pelo
-        # SummarizationMiddleware, para que o agente interprete o
-        # resumo exatamente como interpretaria um resumo gerado na
-        # própria execução atual.
+        # O resumo anterior fornece contexto; não comprova dados operacionais atuais.
         mensagens.append(
             HumanMessage(
                 content=f"Here is a summary of the conversation to date:\n\n{resumo}",
@@ -108,7 +98,6 @@ def carregar_mensagens_contexto(conversa: dict) -> list[BaseMessage]:
 
     ja_resumidas = conversa.get("summarized_count", 0)
     mensagens_brutas = conversa.get("messages", [])[ja_resumidas:]
-    mensagens_brutas = mensagens_brutas[-JANELA_MENSAGENS_RECENTES:]
 
     for mensagem in mensagens_brutas:
         if mensagem["sender"] == "USER":
@@ -124,13 +113,11 @@ def contar_mensagens_brutas_carregadas(conversa: dict) -> int:
     Retorna quantas mensagens brutas foram efetivamente incluídas por
     `carregar_mensagens_contexto` para a conversa informada.
 
-    O MongoSummarizationMiddleware utiliza esse valor para saber
-    quantas mensagens marcar como "cobertas pelo resumo" caso a
-    sumarização seja disparada durante o turno atual.
+    A contagem não descarta mensagens pendentes de compactação.
     """
     ja_resumidas = conversa.get("summarized_count", 0)
     total_disponivel = len(conversa.get("messages", [])) - ja_resumidas
-    return max(0, min(total_disponivel, JANELA_MENSAGENS_RECENTES))
+    return max(0, total_disponivel)
 
 
 def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> None:
@@ -165,39 +152,26 @@ def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> 
     )
 
 
-def registrar_resumo(conversation_id: ObjectId, resumo: str, mensagens_cobertas: int) -> None:
-    """
-    Persiste um novo resumo gerado pelo SummarizationMiddleware para a
-    conversa informada, e avança o marcador de mensagens já cobertas
-    pelo resumo, evitando que voltem a ser recarregadas como mensagens
-    brutas em turnos futuros.
-    """
-    if mensagens_cobertas <= 0:
-        # Ainda assim salva o texto do resumo, apenas não avança o
-        # marcador (não há mensagens brutas novas cobertas).
-        colecao = get_database()[NOME_COLECAO]
-        colecao.update_one(
-            {"_id": conversation_id},
-            {"$set": {"summary": resumo, "summary_updated_at": _agora()}}
-        )
-        return
-
-    colecao = get_database()[NOME_COLECAO]
-
-    colecao.update_one(
-        {"_id": conversation_id},
-        [
-            {
-                "$set": {
-                    "summary": resumo,
-                    "summary_updated_at": _agora(),
-                    "summarized_count": {
-                        "$min": [
-                            {"$add": [{"$ifNull": ["$summarized_count", 0]}, mensagens_cobertas]},
-                            {"$size": {"$ifNull": ["$messages", []]}}
-                        ]
-                    }
-                }
-            }
-        ]
+def registrar_resumo(
+    conversation_id: ObjectId, resumo: str, marcador_anterior: int,
+    marcador_novo: int, *, resumo_anterior: Optional[str] = None
+) -> bool:
+    """Troca o resumo somente se a versão lida ainda é a atual."""
+    if marcador_anterior < 0 or marcador_novo <= marcador_anterior:
+        raise ValueError("Marcadores de resumo inválidos.")
+    resultado = get_database()[NOME_COLECAO].update_one(
+        {
+            "_id": conversation_id,
+            "summary": resumo_anterior,
+            "$expr": {"$and": [
+                {"$eq": [{"$ifNull": ["$summarized_count", 0]}, marcador_anterior]},
+                {"$gte": [{"$size": {"$ifNull": ["$messages", []]}}, marcador_novo]}
+            ]}
+        },
+        {"$set": {
+            "summary": resumo,
+            "summary_updated_at": _agora(),
+            "summarized_count": marcador_novo
+        }}
     )
+    return resultado.modified_count == 1

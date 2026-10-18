@@ -1,4 +1,4 @@
-from config import USUARIO_PADRAO_ID
+from config import USUARIO_PADRAO_ID, configurar_console
 from data.observability import registrar_feedback
 from graph import grafo
 from schemas import GraphState
@@ -119,6 +119,7 @@ def solicitar_feedback(resultado: dict) -> None:
 COMANDOS_SAIDA = {"sair", "exit", "quit", "q"}
 
 if __name__ == "__main__":
+    configurar_console()
 
     print("\n" + "=" * 60)
     print("KAIROS — CHAT DE TESTE")
@@ -150,4 +151,4 @@ if __name__ == "__main__":
             raise
 
         except Exception as erro:
-            print(f"\n[ERRO] Ocorreu um problema ao processar a pergunta: {erro}")
+            print("\n[ERRO] Não foi possível processar a pergunta. Tente novamente mais tarde.")

@@ -1,7 +1,7 @@
 from langchain.agents import create_agent
 
 from data.conversation_middleware import MemoryContext
-from llms import fallback_middleware, llm_principal, llm_rapido, resumo_middleware
+from llms import fallback_middleware, llm_principal, llm_rapido
 from prompts import CLIENTES_PROMPT, ESTOQUE_PROMPT, FAQ_PROMPT, ORQUESTRADOR_PROMPT, VENDAS_PROMPT
 from schemas import Roteamento
 from tools.clientes import CLIENTES_TOOLS
@@ -27,7 +27,7 @@ agente_faq = create_agent(
     model=llm_rapido,
     tools=FAQ_TOOLS,
     system_prompt=FAQ_PROMPT,
-    middleware=[fallback_middleware(rapido=True), resumo_middleware],
+    middleware=[fallback_middleware(rapido=True)],
     context_schema=MemoryContext
 )
 
@@ -36,7 +36,7 @@ agente_estoque = create_agent(
     model=llm_principal,
     tools=ESTOQUE_TOOLS,
     system_prompt=ESTOQUE_PROMPT,
-    middleware=[fallback_middleware(), resumo_middleware],
+    middleware=[fallback_middleware()],
     context_schema=MemoryContext
 )
 
@@ -45,7 +45,7 @@ agente_vendas = create_agent(
     model=llm_principal,
     tools=VENDAS_TOOLS,
     system_prompt=VENDAS_PROMPT,
-    middleware=[fallback_middleware(), resumo_middleware],
+    middleware=[fallback_middleware()],
     context_schema=MemoryContext
 )
 
@@ -54,6 +54,6 @@ agente_clientes = create_agent(
     model=llm_principal,
     tools=CLIENTES_TOOLS,
     system_prompt=CLIENTES_PROMPT,
-    middleware=[fallback_middleware(), resumo_middleware],
+    middleware=[fallback_middleware()],
     context_schema=MemoryContext
 )

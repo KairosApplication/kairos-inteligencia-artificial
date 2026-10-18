@@ -1,45 +1,59 @@
+"""Pool PostgreSQL de leitura, inicializado sob demanda e seguro entre threads."""
 import os
+import threading
+
 from psycopg2 import pool
-from dotenv import load_dotenv
 
-# Carrega as variáveis de ambiente
-load_dotenv()
+from config import settings
 
-# Configurações do banco de dados
-DB_CONFIG = {
-    "host": os.getenv("POSTGRESQL_HOST"),
-    "database": os.getenv("POSTGRESQL_DB"),
-    "user": os.getenv("POSTGRESQL_USER"),
-    "password": os.getenv("POSTGRESQL_PASSWORD"),
-    "port": os.getenv("POSTGRESQL_PORT"),
-}
+connection_pool = None
+_pool_lock = threading.Lock()
 
-# Criação do pool de conexões
-connection_pool = pool.SimpleConnectionPool(
-    minconn=1,  # Número mínimo de conexões no pool
-    maxconn=10,  # Número máximo de conexões no pool
-    **DB_CONFIG
-)
+
+def _get_pool():
+    global connection_pool
+    with _pool_lock:
+        if connection_pool is None:
+            connection_pool = pool.ThreadedConnectionPool(
+                minconn=settings.db_pool_min, maxconn=settings.db_pool_max,
+                host=os.getenv("POSTGRESQL_HOST"), database=os.getenv("POSTGRESQL_DB"),
+                user=os.getenv("POSTGRESQL_USER"), password=os.getenv("POSTGRESQL_PASSWORD"),
+                port=os.getenv("POSTGRESQL_PORT") or "5432",
+                connect_timeout=settings.db_timeout_seconds,
+                options=f"-c statement_timeout={settings.db_statement_timeout_ms}",
+            )
+        return connection_pool
+
 
 def get_connection():
-    """
-    Obtém uma conexão do pool.
-    """
-    if connection_pool:
-        return connection_pool.getconn()
-    else:
-        raise Exception("O pool de conexões não foi inicializado.")
+    conn = _get_pool().getconn()
+    try:
+        conn.set_session(readonly=True, autocommit=False)
+    except Exception:
+        release_connection(conn)
+        raise
+    return conn
+
 
 def release_connection(conn):
-    """
-    Libera uma conexão de volta para o pool.
-    """
-    if connection_pool:
+    if connection_pool is not None:
         connection_pool.putconn(conn)
 
+
+def executar_consulta(sql: str, params: dict) -> list:
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+    finally:
+        release_connection(conn)
+
+
 def close_pool():
-    """
-    Fecha todas as conexões do pool.
-    """
-    if connection_pool:
-        connection_pool.closeall()
+    global connection_pool
+    with _pool_lock:
+        if connection_pool is not None:
+            connection_pool.closeall()
+            connection_pool = None

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     groq_chat_model: str = "openai/gpt-oss-120b"
     groq_fast_model: str = "openai/gpt-oss-20b"
     chat_temperature: float = Field(default=0.2, ge=0, le=2)
+    fast_temperature: float = Field(default=0, ge=0, le=2)
     llm_timeout_seconds: float = Field(default=45, gt=0)
     llm_max_tokens: int = Field(default=2048, gt=0)
     openai_embedding_model: str = "text-embedding-3-small"
@@ -30,6 +31,18 @@ class Settings(BaseSettings):
     faq_lambda_mult: float = Field(default=0.7, ge=0, le=1)
     resumo_gatilho_mensagens: int = Field(default=12, ge=4)
     resumo_manter_mensagens: int = Field(default=4, ge=2)
+    resumo_lote_mensagens: int = Field(default=40, ge=2)
+    max_tentativas_juiz: int = Field(default=2, ge=1, le=5)
+    estoque_limite_critico: float = Field(default=0.2, ge=0, le=1)
+    estoque_limite_baixo: float = Field(default=0.5, ge=0, le=1)
+    mongodb_database: str = "kairos_ai"
+    db_pool_min: int = Field(default=1, ge=1)
+    db_pool_max: int = Field(default=10, ge=1)
+    db_timeout_seconds: int = Field(default=10, ge=1)
+    db_statement_timeout_ms: int = Field(default=10000, ge=1)
+    limite_padrao_resultados: int = Field(default=20, ge=1)
+    limite_maximo_resultados: int = Field(default=50, ge=1)
+    memorias_contexto_limite: int = Field(default=5, ge=1)
 
     @model_validator(mode="after")
     def validar_faixas(self):
@@ -39,6 +52,14 @@ class Settings(BaseSettings):
             raise ValueError("FAQ_FETCH_K deve ser maior ou igual a FAQ_K.")
         if self.resumo_manter_mensagens >= self.resumo_gatilho_mensagens:
             raise ValueError("A retenção do resumo deve ser menor que seu gatilho.")
+        if self.estoque_limite_critico >= self.estoque_limite_baixo:
+            raise ValueError("O limite crítico deve ser menor que o limite baixo.")
+        if self.db_pool_min > self.db_pool_max:
+            raise ValueError("DB_POOL_MIN não pode exceder DB_POOL_MAX.")
+        if self.limite_padrao_resultados > self.limite_maximo_resultados:
+            raise ValueError("O limite padrão de resultados não pode exceder o máximo.")
+        if self.resumo_manter_mensagens % 2 or self.resumo_lote_mensagens % 2:
+            raise ValueError("Retenção e lote de resumo devem preservar pares de mensagens.")
         return self
 
 
