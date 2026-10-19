@@ -10,6 +10,7 @@ from config import USUARIO_PADRAO_ID, _agora_dt, settings
 from data.memory_store import (
     carregar_mensagens_contexto,
     obter_ou_criar_conversa_ativa,
+    obter_conversa_por_id,
     registrar_turno
 )
 from data.conversation_middleware import MemoryContext, compactar_conversa
@@ -54,7 +55,11 @@ def memoria_node(state: GraphState):
     user_id = state.get("user_id", USUARIO_PADRAO_ID)
     pergunta = state["pergunta"]
 
-    conversa = obter_ou_criar_conversa_ativa(user_id)
+    conversation_id = state.get("conversation_id")
+    conversa = (obter_conversa_por_id(conversation_id) if conversation_id is not None
+                else obter_ou_criar_conversa_ativa(user_id))
+    if conversa is None or conversa["user_id"] != user_id:
+        raise PermissionError("Conversa não encontrada para este usuário.")
     execution_id = iniciar_execucao(user_id, conversa["_id"], pergunta)
     try:
         conversa = compactar_conversa(

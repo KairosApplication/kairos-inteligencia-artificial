@@ -1,0 +1,153 @@
+"""API interna do chatbot. Executar com: uvicorn api:app --host 127.0.0.1 --port 8000.
+
+O backend autenticado fornece userId. O token de serviço nunca vai ao frontend.
+Login e permissões de perfis serão integrados ao backend real em etapa posterior.
+"""
+import logging
+import secrets
+from contextlib import contextmanager
+from threading import Event, Thread
+from uuid import uuid4
+
+from bson import ObjectId
+from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, ConfigDict, Field
+
+from config import settings
+from data.ai_api import PersistenceError, get_ai_api, via_api
+from data.request_context import ChatContext, chat_context
+
+logger = logging.getLogger(__name__)
+app = FastAPI(title="Kairos Chatbot", docs_url=None, redoc_url=None, openapi_url=None)
+bearer = HTTPBearer(auto_error=False)
+
+
+def service_access(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    token = settings.chatbot_service_token
+    if token is None or len(token.get_secret_value()) < 32:
+        raise HTTPException(503, "Acesso interno não configurado.")
+    if credentials is None or not secrets.compare_digest(credentials.credentials.encode(), token.get_secret_value().encode()):
+        raise HTTPException(401, "Token de serviço inválido.", headers={"WWW-Authenticate": "Bearer"})
+    if not via_api():
+        raise HTTPException(503, "A API do chatbot exige a persistência HTTP configurada.")
+    try:
+        get_ai_api()
+    except (RuntimeError, ValueError):
+        raise HTTPException(503, "Conexão com a API de IA não configurada.") from None
+
+
+class UserRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    user_id: int = Field(alias="userId", gt=0, le=2147483647, strict=True)
+
+
+class ChatRequest(UserRequest):
+    question: str = Field(min_length=1, max_length=10000, pattern=r"\S")
+    conversation_id: str | None = Field(default=None, alias="conversationId", pattern=r"^[a-fA-F0-9]{24}$")
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    conversationId: str
+    executionId: str
+    blocked: bool
+    approved: bool
+
+
+def execute_graph(state):
+    # Importação lazy: health, validação e autenticação não inicializam agentes.
+    from graph import grafo
+    return grafo.invoke(state)
+
+
+@contextmanager
+def conversation_lease(api, user_id, conversation_id, owner):
+    api.lease(user_id, conversation_id, owner)
+    stop = Event()
+    lost = Event()
+
+    def renew():
+        while not stop.wait(10):
+            try:
+                api.lease(user_id, conversation_id, owner, action="renew")
+            except PersistenceError:
+                lost.set()
+                return
+
+    worker = Thread(target=renew, daemon=True)
+    worker.start()
+    try:
+        yield lost
+    finally:
+        stop.set()
+        worker.join(timeout=settings.ai_api_timeout_seconds + 1)
+        try:
+            api.lease(user_id, conversation_id, owner, action="release")
+        except PersistenceError:
+            logger.warning("Não foi possível liberar a reserva da conversa; ela expirará no servidor.")
+
+
+@app.get("/health")
+def health():
+    return {"status": "UP"}
+
+
+@app.exception_handler(PersistenceError)
+def persistence_failure(request, error):
+    status = error.status if error.status in {404, 409} else 503
+    return JSONResponse(status_code=status, content={"detail": "Recurso indisponível para este usuário ou operação em conflito."})
+
+
+@app.post("/api/v1/chat/conversations", dependencies=[Depends(service_access)], status_code=201)
+def create_conversation(request: UserRequest):
+    document = get_ai_api().create("conversations", {"user_id": request.user_id, "status": "ACTIVE", "summarized_count": 0})
+    return {"id": str(document["_id"]), "userId": request.user_id, "status": document["status"]}
+
+
+@app.get("/api/v1/chat/users/{user_id}/conversations", dependencies=[Depends(service_access)])
+def list_conversations(user_id: int, page: int = Query(default=0, ge=0, le=10000), size: int = Query(default=20, ge=1, le=100)):
+    if user_id <= 0 or user_id > 2147483647:
+        raise HTTPException(422, "Identificador de usuário inválido.")
+    result = get_ai_api().request("GET", "conversations", params={"userId": user_id, "page": page, "size": size})
+    # A lista não precisa transportar todo o histórico de cada conversa.
+    result["items"] = [{key: item.get(key) for key in ("id", "status", "createdAt", "updatedAt")}
+                       for item in result["items"]]
+    return result
+
+
+@app.get("/api/v1/chat/users/{user_id}/conversations/{conversation_id}", dependencies=[Depends(service_access)])
+def read_conversation(user_id: int, conversation_id: str):
+    if user_id <= 0 or user_id > 2147483647 or not ObjectId.is_valid(conversation_id):
+        raise HTTPException(422, "Identificador inválido.")
+    return get_ai_api().request("GET", f"runtime/users/{user_id}/conversations/{conversation_id}")
+
+
+@app.post("/api/v1/chat/messages", response_model=ChatResponse, dependencies=[Depends(service_access)])
+def message(request: ChatRequest):
+    try:
+        api = get_ai_api()
+        conversation = (api.conversation(request.user_id, request.conversation_id) if request.conversation_id
+                        else api.active_conversation(request.user_id))
+        conversation_id = conversation["_id"]
+        owner = str(uuid4())
+        with conversation_lease(api, request.user_id, conversation_id, owner) as lost:
+            context_token = chat_context.set(ChatContext(request.user_id, conversation_id, owner))
+            try:
+                result = execute_graph({"pergunta": request.question, "user_id": request.user_id,
+                                        "conversation_id": conversation_id})
+                if lost.is_set():
+                    raise PersistenceError(409)
+            finally:
+                chat_context.reset(context_token)
+        return ChatResponse(answer=result["resposta"], conversationId=str(conversation_id),
+                            executionId=str(result["execution_id"]), blocked=result.get("bloqueado", False),
+                            approved=result.get("aprovado", False))
+    except PersistenceError as error:
+        status = error.status if error.status in {404, 409} else 503
+        detail = {404: "Conversa não encontrada para este usuário.", 409: "A conversa está ocupada ou foi alterada. Tente novamente."}.get(status, "Persistência temporariamente indisponível.")
+        raise HTTPException(status, detail) from None
+    except Exception:
+        logger.warning("Não foi possível concluir a solicitação do chatbot.")
+        raise HTTPException(503, "Não foi possível concluir a solicitação.") from None
