@@ -100,3 +100,4 @@ class GraphState(TypedDict):
     # Observabilidade (preenchidos pelo memoria_node / consumidos por
     # todos os demais nós para registrar seus próprios traces)
     execution_id: object
+    evidencias: list[dict]

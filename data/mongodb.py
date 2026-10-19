@@ -1,14 +1,9 @@
 import os
 
 import certifi
-from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.database import Database
-
-# Carrega as variáveis de ambiente
-load_dotenv()
-
-NOME_BANCO = "kairos_ai"
+from config import settings
 
 # Cliente único, criado sob demanda (lazy) e reutilizado entre chamadas.
 _client: MongoClient | None = None
@@ -31,7 +26,13 @@ def get_client() -> MongoClient:
         if not uri:
             raise RuntimeError("MONGODB_URI não foi configurada no .env.")
 
-        _client = MongoClient(uri, tlsCAFile=certifi.where())
+        tls_options = {"tlsCAFile": certifi.where()} if uri.startswith("mongodb+srv://") or "tls=true" in uri.lower() else {}
+        _client = MongoClient(
+            uri, **tls_options,
+            serverSelectionTimeoutMS=settings.db_timeout_seconds * 1000,
+            connectTimeoutMS=settings.db_timeout_seconds * 1000,
+            socketTimeoutMS=settings.db_timeout_seconds * 1000,
+        )
 
     return _client
 
@@ -40,7 +41,10 @@ def get_database() -> Database:
     """
     Obtém o banco de dados do Kairos no cluster MongoDB.
     """
-    return get_client()[NOME_BANCO]
+    nome_banco = (settings.mongodb_database or "").strip()
+    if not nome_banco:
+        raise RuntimeError("MONGODB_DATABASE não foi configurada no ambiente.")
+    return get_client()[nome_banco]
 
 
 def close_client() -> None:

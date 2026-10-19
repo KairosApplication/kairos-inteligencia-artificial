@@ -1,4 +1,6 @@
 from langgraph.graph import END, START, StateGraph
+from functools import wraps
+import logging
 
 from graph_nodes import (
     clientes_node,
@@ -14,6 +16,30 @@ from graph_nodes import (
     vendas_node
 )
 from schemas import GraphState
+from config import _agora_dt
+from data.observability import finalizar_execucao, registrar_trace_agente
+
+logger = logging.getLogger(__name__)
+
+
+def _node_observado(func):
+    @wraps(func)
+    def executar(state):
+        inicio = _agora_dt()
+        try:
+            return func(state)
+        except Exception as error:
+            if state.get("execution_id"):
+                try:
+                    registrar_trace_agente(
+                        state["execution_id"], func.__name__, "ERROR", inicio, _agora_dt(),
+                        entrada={}, saida={"erro": type(error).__name__},
+                    )
+                    finalizar_execucao(state["execution_id"], "ERROR", "Não foi possível concluir a consulta.")
+                except Exception:
+                    logger.exception("Não foi possível registrar a falha de execução.")
+            raise
+    return executar
 
 # CONSTRUÇÃO DO GRAFO
 builder = StateGraph(GraphState)
@@ -21,42 +47,42 @@ builder = StateGraph(GraphState)
 # NODES
 builder.add_node(
     "memoria",
-    memoria_node
+    _node_observado(memoria_node)
 )
 
 builder.add_node(
     "guardrail",
-    guardrail_node
+    _node_observado(guardrail_node)
 )
 
 builder.add_node(
     "orquestrador",
-    orquestrador_node
+    _node_observado(orquestrador_node)
 )
 
 builder.add_node(
     "faq",
-    faq_node
+    _node_observado(faq_node)
 )
 
 builder.add_node(
     "estoque",
-    estoque_node
+    _node_observado(estoque_node)
 )
 
 builder.add_node(
     "vendas",
-    vendas_node
+    _node_observado(vendas_node)
 )
 
 builder.add_node(
     "clientes",
-    clientes_node
+    _node_observado(clientes_node)
 )
 
 builder.add_node(
     "juiz",
-    juiz_node
+    _node_observado(juiz_node)
 )
 
 # EDGES

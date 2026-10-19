@@ -1,48 +1,22 @@
 import statistics
 from typing import Optional
 
-from dotenv import load_dotenv
+from config import settings
+
 from langchain.tools import tool
 
-from data.postgres import get_connection, release_connection
+from data.postgres import executar_consulta
+from tools.query_policy import validar_limite, validar_periodo
 
-load_dotenv()
 
 # Status que representa uma compra efetivamente concluída.
 # IN_PROGRESS e CANCELLED não são consideradas venda para fins de
 # análise de demanda.
 STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
-LIMITE_PADRAO_RESULTADOS = 20
-LIMITE_MAXIMO_RESULTADOS = 50
-
-DIAS_PADRAO_HISTORICO = 30
-DIAS_MAXIMO_HISTORICO = 365
-
-SEMANAS_PADRAO_TENDENCIA = 8
-SEMANAS_MAXIMA_TENDENCIA = 52
-
-SEMANAS_PADRAO_PREVISAO = 4
-SEMANAS_MAXIMA_PREVISAO = 12
-
 
 def _executar_consulta(sql: str, params: dict) -> list:
-    """
-    Executa uma consulta SQL de leitura utilizando uma conexão obtida
-    do pool de conexões, garantindo que a conexão seja liberada de
-    volta ao pool ao final, mesmo em caso de erro.
-    """
-    conn = get_connection()
-
-    try:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        linhas = cur.fetchall()
-        cur.close()
-        return linhas
-
-    finally:
-        release_connection(conn)
+    return executar_consulta(sql, params)
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
@@ -54,18 +28,6 @@ def _like(valor: Optional[str]) -> Optional[str]:
         return None
 
     return f"%{valor.strip()}%"
-
-
-def _normalizar_intervalo(valor: int, padrao: int, maximo: int) -> int:
-    """
-    Garante que um intervalo numérico (dias, semanas, limite) esteja
-    dentro de uma faixa segura, evitando consultas sem limite
-    definido ou períodos exagerados.
-    """
-    if not valor or valor <= 0:
-        return padrao
-
-    return min(valor, maximo)
 
 
 def _serie_semanal_vendas(
@@ -87,7 +49,7 @@ def _serie_semanal_vendas(
         WITH semanas_periodo AS (
             SELECT generate_series(
                 DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week')),
-                DATE_TRUNC('week', now()),
+                DATE_TRUNC('week', now()) - INTERVAL '1 week',
                 INTERVAL '1 week'
             )::date AS semana
         ),
@@ -101,6 +63,7 @@ def _serie_semanal_vendas(
             LEFT JOIN categories c ON c.id = pr.category_id
             WHERE p.status = %(status_concluido)s
               AND p.date >= DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week'))
+              AND p.date < DATE_TRUNC('week', now())
               AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
               AND (%(categoria)s IS NULL OR c.category ILIKE %(categoria)s)
             GROUP BY semana
@@ -117,6 +80,7 @@ def _serie_semanal_vendas(
             quantidade_vendida,
             ROW_NUMBER() OVER (ORDER BY semana) AS indice_semana
         FROM serie
+        WHERE EXISTS (SELECT 1 FROM vendas)
         ORDER BY semana ASC
     """
 
@@ -235,8 +199,8 @@ def _classificar_tendencia(
 def consultar_historico_vendas(
     produto: Optional[str] = None,
     categoria: Optional[str] = None,
-    dias: int = DIAS_PADRAO_HISTORICO,
-    limite: int = LIMITE_PADRAO_RESULTADOS
+    dias: Optional[int] = None,
+    limite: Optional[int] = None
 ) -> str:
     """
     Consulta o histórico de vendas concluídas do Kairos em um
@@ -249,12 +213,16 @@ def consultar_historico_vendas(
     Parâmetros:
         produto: filtra pelo nome (ou parte do nome) do produto.
         categoria: filtra pela categoria (ou parte do nome) do produto.
-        dias: quantidade de dias anteriores à data atual considerados
-            no histórico.
+        dias: últimos N dias, conforme pedido do usuário; se ausente,
+            pede esclarecimento sem consultar o banco.
         limite: quantidade máxima de produtos retornados.
     """
-    dias = _normalizar_intervalo(dias, DIAS_PADRAO_HISTORICO, DIAS_MAXIMO_HISTORICO)
-    limite = _normalizar_intervalo(limite, LIMITE_PADRAO_RESULTADOS, LIMITE_MAXIMO_RESULTADOS)
+    dias, aviso = validar_periodo(dias, "dias", settings.historico_vendas_max_dias, "De quantos dias anteriores você quer consultar as vendas?")
+    if aviso:
+        return aviso
+    limite, aviso = validar_limite(limite)
+    if aviso:
+        return aviso
 
     sql = """
         SELECT
@@ -271,7 +239,7 @@ def consultar_historico_vendas(
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
           AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
           AND (%(categoria)s IS NULL OR c.category ILIKE %(categoria)s)
-        GROUP BY pr.name, c.category
+        GROUP BY pr.id, pr.name, c.category
         ORDER BY quantidade_vendida DESC
         LIMIT %(limite)s
     """
@@ -285,13 +253,13 @@ def consultar_historico_vendas(
             "limite": limite
         })
 
-    except Exception as erro:
-        return f"Não foi possível consultar o histórico de vendas: {erro}"
+    except Exception:
+        return "Não foi possível consultar o histórico de vendas. Tente novamente mais tarde."
 
     if not linhas:
         return f"Nenhuma venda concluída encontrada nos últimos {dias} dias para os filtros informados."
 
-    resultados = [f"Histórico de vendas concluídas nos últimos {dias} dias:"]
+    resultados = [f"Histórico de vendas concluídas nos últimos {dias} dias (até {limite} produtos):"]
 
     for nome, categoria_nome, quantidade, valor_total, numero_pedidos in linhas:
         resultados.append(
@@ -307,7 +275,7 @@ def consultar_historico_vendas(
 def analisar_tendencia_vendas(
     produto: Optional[str] = None,
     categoria: Optional[str] = None,
-    semanas: int = SEMANAS_PADRAO_TENDENCIA
+    semanas: Optional[int] = None
 ) -> str:
     """
     Analisa a tendência de vendas de um produto ou categoria ao
@@ -320,16 +288,21 @@ def analisar_tendencia_vendas(
     Parâmetros:
         produto: filtra pelo nome (ou parte do nome) do produto.
         categoria: filtra pela categoria (ou parte do nome) do produto.
-        semanas: quantidade de semanas anteriores à data atual
-            consideradas na análise.
+        semanas: semanas completas anteriores, conforme pedido do usuário;
+            se ausente, pede esclarecimento sem consultar o banco.
     """
-    semanas = _normalizar_intervalo(semanas, SEMANAS_PADRAO_TENDENCIA, SEMANAS_MAXIMA_TENDENCIA)
+    semanas, aviso = validar_periodo(
+        semanas, "semanas", settings.tendencia_max_semanas,
+        "Quantas semanas completas você quer analisar?", minimo=3,
+    )
+    if aviso:
+        return aviso
 
     try:
         linhas = _serie_semanal_vendas(produto, categoria, semanas)
 
-    except Exception as erro:
-        return f"Não foi possível analisar a tendência de vendas: {erro}"
+    except Exception:
+        return "Não foi possível analisar a tendência de vendas. Tente novamente mais tarde."
 
     if not linhas:
         return "Nenhum dado de vendas encontrado para o período e filtros informados."
@@ -371,8 +344,8 @@ def analisar_tendencia_vendas(
 def prever_demanda_futura(
     produto: Optional[str] = None,
     categoria: Optional[str] = None,
-    semanas_historico: int = SEMANAS_PADRAO_TENDENCIA,
-    semanas_previsao: int = SEMANAS_PADRAO_PREVISAO
+    semanas_historico: Optional[int] = None,
+    semanas_previsao: Optional[int] = None
 ) -> str:
     """
     Projeta a quantidade de vendas esperada para as próximas semanas,
@@ -388,22 +361,27 @@ def prever_demanda_futura(
     Parâmetros:
         produto: filtra pelo nome (ou parte do nome) do produto.
         categoria: filtra pela categoria (ou parte do nome) do produto.
-        semanas_historico: quantidade de semanas de histórico
-            utilizadas para calcular a tendência.
-        semanas_previsao: quantidade de semanas futuras a projetar.
+        semanas_historico: semanas completas de histórico confirmadas
+            pelo usuário; não invente um valor quando ausente.
+        semanas_previsao: semanas futuras confirmadas pelo usuário;
+            ambos os períodos são necessários antes de consultar o banco.
     """
-    semanas_historico = _normalizar_intervalo(
-        semanas_historico, SEMANAS_PADRAO_TENDENCIA, SEMANAS_MAXIMA_TENDENCIA
+    semanas_historico, aviso_historico = validar_periodo(
+        semanas_historico, "semanas", settings.tendencia_max_semanas,
+        "Quantas semanas completas de histórico devemos usar na previsão?", minimo=2,
     )
-    semanas_previsao = _normalizar_intervalo(
-        semanas_previsao, SEMANAS_PADRAO_PREVISAO, SEMANAS_MAXIMA_PREVISAO
+    semanas_previsao, aviso_previsao = validar_periodo(
+        semanas_previsao, "semanas", settings.previsao_max_semanas,
+        "Para quantas semanas futuras você quer a previsão?",
     )
+    if aviso_historico or aviso_previsao:
+        return " ".join(aviso for aviso in [aviso_historico, aviso_previsao] if aviso)
 
     try:
         linhas = _serie_semanal_vendas(produto, categoria, semanas_historico)
 
-    except Exception as erro:
-        return f"Não foi possível projetar a demanda: {erro}"
+    except Exception:
+        return "Não foi possível projetar a demanda. Tente novamente mais tarde."
 
     if not linhas:
         return (
