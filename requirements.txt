@@ -3,6 +3,7 @@ langgraph
 langchain-groq>=1.1.3
 langchain-huggingface
 langchain-google-genai
+langsmith>=0.7.9
 python-dotenv
 pymongo
 certifi
