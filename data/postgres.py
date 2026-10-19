@@ -14,9 +14,12 @@ def _get_pool():
     global connection_pool
     with _pool_lock:
         if connection_pool is None:
+            database = (os.getenv("POSTGRESQL_DB") or "").strip()
+            if not database:
+                raise RuntimeError("POSTGRESQL_DB não foi configurada no ambiente.")
             connection_pool = pool.ThreadedConnectionPool(
                 minconn=settings.db_pool_min, maxconn=settings.db_pool_max,
-                host=os.getenv("POSTGRESQL_HOST"), database=os.getenv("POSTGRESQL_DB"),
+                host=os.getenv("POSTGRESQL_HOST"), database=database,
                 user=os.getenv("POSTGRESQL_USER"), password=os.getenv("POSTGRESQL_PASSWORD"),
                 port=os.getenv("POSTGRESQL_PORT") or "5432",
                 connect_timeout=settings.db_timeout_seconds,

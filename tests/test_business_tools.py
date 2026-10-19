@@ -69,6 +69,16 @@ def test_configuracao_rejeita_faixas_invalidas():
         Settings(estoque_limite_critico=.8, estoque_limite_baixo=.2)
 
 
+def test_postgresql_sem_nome_nao_usa_banco_implicito(monkeypatch):
+    monkeypatch.delenv("POSTGRESQL_DB", raising=False)
+    monkeypatch.setattr(postgres, "connection_pool", None)
+    create_pool = Mock()
+    monkeypatch.setattr(postgres.pool, "ThreadedConnectionPool", create_pool)
+    with pytest.raises(RuntimeError, match="POSTGRESQL_DB"):
+        postgres.get_connection()
+    create_pool.assert_not_called()
+
+
 def test_localizar_cliente_retorna_identificacao(monkeypatch):
     monkeypatch.setattr(clientes, "_executar_consulta", lambda *args: [
         (7, "Maria", "Teste", "maria@example.invalid")])

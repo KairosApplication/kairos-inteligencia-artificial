@@ -23,7 +23,7 @@ from data.observability import (
     registrar_memorias,
     registrar_trace_agente
 )
-from llms import extrator_memoria, guardrail, juiz, llm_resumo
+from llms import extrator_memoria, guardrail, juiz, llm_rapido, llm_resumo
 from prompts import GUARDRAIL_PROMPT, JUIZ_PROMPT, MEMORIA_PROMPT
 from schemas import AvaliacaoGuardrail, AvaliacaoJuiz, ExtracaoMemoria, GraphState, Roteamento
 
@@ -57,7 +57,9 @@ def memoria_node(state: GraphState):
     conversa = obter_ou_criar_conversa_ativa(user_id)
     execution_id = iniciar_execucao(user_id, conversa["_id"], pergunta)
     try:
-        conversa = compactar_conversa(conversa, llm_resumo, execution_id=execution_id)
+        conversa = compactar_conversa(
+            conversa, llm_resumo, modelo_contexto=llm_rapido, execution_id=execution_id,
+        )
         historico = carregar_mensagens_contexto(conversa)
         memorias_usuario = carregar_memorias(user_id)
 

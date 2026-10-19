@@ -2,8 +2,8 @@
 Memória de longo prazo do Kairos.
 
 Este módulo é responsável por carregar e persistir o histórico de
-conversas por usuário na coleção `conversations` do banco `kairos_ai`
-no MongoDB, incluindo os resumos produzidos por compactação de turnos aprovados
+conversas por usuário na coleção `conversations` do MongoDB configurado
+pelo ambiente, incluindo os resumos produzidos por compactação de turnos aprovados
 (ver `data/conversation_middleware.py`).
 
 Como o histórico é armazenado no MongoDB (e não apenas em memória do

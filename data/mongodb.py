@@ -1,15 +1,9 @@
 import os
 
 import certifi
-from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.database import Database
 from config import settings
-
-# Carrega as variáveis de ambiente
-load_dotenv()
-
-NOME_BANCO = settings.mongodb_database
 
 # Cliente único, criado sob demanda (lazy) e reutilizado entre chamadas.
 _client: MongoClient | None = None
@@ -47,7 +41,10 @@ def get_database() -> Database:
     """
     Obtém o banco de dados do Kairos no cluster MongoDB.
     """
-    return get_client()[NOME_BANCO]
+    nome_banco = (settings.mongodb_database or "").strip()
+    if not nome_banco:
+        raise RuntimeError("MONGODB_DATABASE não foi configurada no ambiente.")
+    return get_client()[nome_banco]
 
 
 def close_client() -> None:

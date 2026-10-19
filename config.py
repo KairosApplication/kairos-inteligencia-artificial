@@ -13,15 +13,8 @@ load_dotenv(ROOT_DIR / ".env")
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
-    openai_chat_model: str = "gpt-4.1-mini"
-    openai_fast_model: str = "gpt-4.1-mini"
-    groq_chat_model: str = "openai/gpt-oss-120b"
-    groq_fast_model: str = "openai/gpt-oss-20b"
-    chat_temperature: float = Field(default=0.2, ge=0, le=2)
-    fast_temperature: float = Field(default=0, ge=0, le=2)
     llm_timeout_seconds: float = Field(default=45, gt=0)
     llm_max_tokens: int = Field(default=2048, gt=0)
-    openai_embedding_model: str = "text-embedding-3-small"
     faq_pdf_path: Path = ROOT_DIR / "data" / "FAQ_Kairos.pdf"
     faq_cache_path: Path = ROOT_DIR / ".cache" / "faq-embeddings.sqlite3"
     faq_chunk_size: int = Field(default=600, gt=0)
@@ -35,7 +28,7 @@ class Settings(BaseSettings):
     max_tentativas_juiz: int = Field(default=2, ge=1, le=5)
     estoque_limite_critico: float = Field(default=0.2, ge=0, le=1)
     estoque_limite_baixo: float = Field(default=0.5, ge=0, le=1)
-    mongodb_database: str = "kairos_ai"
+    mongodb_database: str | None = None
     db_pool_min: int = Field(default=1, ge=1)
     db_pool_max: int = Field(default=10, ge=1)
     db_timeout_seconds: int = Field(default=10, ge=1)

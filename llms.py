@@ -6,6 +6,14 @@ from config import settings
 from data.model_fallback import GroqRateLimitFallback, com_fallback_de_limite
 from schemas import AvaliacaoGuardrail, AvaliacaoJuiz, ExtracaoMemoria
 
+# Modelos utilizados pelo projeto, visíveis para avaliação e versionados.
+OPENAI_CHAT_MODEL = "gpt-4.1-mini"
+OPENAI_FAST_MODEL = "gpt-4.1-mini"
+GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
+GROQ_FAST_MODEL = "openai/gpt-oss-20b"
+CHAT_TEMPERATURE = 0.2
+FAST_TEMPERATURE = 0
+
 
 def _openai(model, temperature):
     return ChatOpenAI(
@@ -21,10 +29,10 @@ def _groq(model, temperature):
     )
 
 
-llm_principal = _openai(settings.openai_chat_model, settings.chat_temperature)
-llm_rapido = _openai(settings.openai_fast_model, settings.fast_temperature)
-groq_principal = _groq(settings.groq_chat_model, settings.chat_temperature)
-groq_rapido = _groq(settings.groq_fast_model, settings.fast_temperature)
+llm_principal = _openai(OPENAI_CHAT_MODEL, CHAT_TEMPERATURE)
+llm_rapido = _openai(OPENAI_FAST_MODEL, FAST_TEMPERATURE)
+groq_principal = _groq(GROQ_CHAT_MODEL, CHAT_TEMPERATURE)
+groq_rapido = _groq(GROQ_FAST_MODEL, FAST_TEMPERATURE)
 
 
 def fallback_middleware(rapido=False):

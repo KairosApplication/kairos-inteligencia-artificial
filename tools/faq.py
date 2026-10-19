@@ -13,6 +13,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 
+EMBEDDING_MODEL = "text-embedding-3-small"
+
 
 class CachedEmbeddings(Embeddings):
     """Cache por texto e modelo; armazena somente vetores JSON em SQLite."""
@@ -52,9 +54,9 @@ def create_faq_database():
         chunk_size=settings.faq_chunk_size, chunk_overlap=settings.faq_chunk_overlap,
     ).split_documents(docs)
     embeddings = CachedEmbeddings(
-        OpenAIEmbeddings(model=settings.openai_embedding_model, max_retries=2,
+        OpenAIEmbeddings(model=EMBEDDING_MODEL, max_retries=2,
                          request_timeout=settings.llm_timeout_seconds),
-        settings.faq_cache_path, settings.openai_embedding_model,
+        settings.faq_cache_path, EMBEDDING_MODEL,
     )
     return FAISS.from_documents(chunks, embeddings)
 

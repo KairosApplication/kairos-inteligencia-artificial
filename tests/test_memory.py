@@ -1,11 +1,12 @@
 import json
 from unittest.mock import Mock
 
+import pytest
 from bson import ObjectId
 from langchain_core.messages import AIMessage
 
 from data import conversation_middleware as memory
-from data import memory_store
+from data import memory_store, mongodb
 
 
 def conversation(n=20):
@@ -68,4 +69,16 @@ def test_historico_longo_e_resumido_em_lotes_sem_perdas(monkeypatch):
     assert covered == list(range(60))
     assert result["summarized_count"] == 60
     assert model.invoke.call_count == 2
+    payload = json.loads(model.invoke.call_args.args[0][-1].content)
+    assert payload["resumo_anterior"] == "Resumo"
+    assert [m["content"] for m in payload["mensagens_aprovadas"]] == [str(i) for i in range(40, 60)]
     assert [m.content for m in memory_store.carregar_mensagens_contexto(result)][1:] == ["60", "61", "62", "63"]
+
+
+def test_mongodb_sem_nome_nao_conecta_ao_banco_padrao(monkeypatch):
+    monkeypatch.setattr(mongodb.settings, "mongodb_database", None)
+    client = Mock()
+    monkeypatch.setattr(mongodb, "get_client", client)
+    with pytest.raises(RuntimeError, match="MONGODB_DATABASE"):
+        mongodb.get_database()
+    client.assert_not_called()
