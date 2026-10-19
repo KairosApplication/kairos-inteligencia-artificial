@@ -25,11 +25,6 @@ SEMANAS_MAXIMA_TENDENCIA = 52
 SEMANAS_PADRAO_PREVISAO = 4
 SEMANAS_MAXIMA_PREVISAO = 12
 
-# Limiar relativo à média semanal utilizado para classificar a
-# tendência como "estável". Variações de inclinação menores que este
-# percentual da média semanal são consideradas ruído, não tendência.
-LIMIAR_TENDENCIA_ESTAVEL = 0.05
-
 
 def _executar_consulta(sql: str, params: dict) -> list:
     """
@@ -100,10 +95,10 @@ def _serie_semanal_vendas(
             SELECT
                 DATE_TRUNC('week', p.date)::date AS semana,
                 SUM(pp.quantity) AS quantidade_vendida
-            FROM purchase p
-            JOIN purchase_product pp ON pp.purchase_id = p.id
-            JOIN product pr ON pr.id = pp.product_id
-            LEFT JOIN category c ON c.id = pr.category_id
+            FROM purchases p
+            JOIN purchase_products pp ON pp.purchase_id = p.id
+            JOIN products pr ON pr.id = pp.product_id
+            LEFT JOIN categories c ON c.id = pr.category_id
             WHERE p.status = %(status_concluido)s
               AND p.date >= DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week'))
               AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
@@ -152,26 +147,85 @@ def _regressao_linear(indices: list, valores: list):
     return resultado.slope, resultado.intercept
 
 
-def _classificar_tendencia(inclinacao: Optional[float], media_semanal: Optional[float]) -> str:
+def _erro_padrao_inclinacao(
+    indices: list, valores: list, inclinacao: float, intercepto: float
+) -> Optional[float]:
+    """
+    Calcula o erro padrão da inclinação de uma regressão linear
+    simples, a partir dos resíduos observados na própria série
+    (dispersão real dos pontos em torno da reta ajustada).
+
+    Esse valor mede o quanto a inclinação estimada pode variar
+    por acaso, dado o ruído característico desta série específica;
+    é a base para `_classificar_tendencia` decidir se a inclinação
+    observada é grande o suficiente, em relação ao próprio ruído da
+    série, para ser chamada de tendência (em vez de comparar contra
+    um percentual fixo arbitrário).
+
+    Retorna None quando não há graus de liberdade suficientes (menos
+    de 3 pontos) ou quando os índices não variam (nesse caso
+    `_regressao_linear` já teria retornado None).
+    """
+    n = len(indices)
+
+    if n < 3:
+        return None
+
+    media_x = statistics.mean(indices)
+    soma_quadrados_x = sum((x - media_x) ** 2 for x in indices)
+
+    if soma_quadrados_x == 0:
+        return None
+
+    soma_quadrados_residuos = sum(
+        (y - (intercepto + inclinacao * x)) ** 2 for x, y in zip(indices, valores)
+    )
+
+    # Variância residual (erro quadrático médio), com n-2 graus de
+    # liberdade (dois parâmetros estimados: inclinação e intercepto).
+    variancia_residual = soma_quadrados_residuos / (n - 2)
+
+    return (variancia_residual / soma_quadrados_x) ** 0.5
+
+
+def _classificar_tendencia(
+    inclinacao: Optional[float], erro_padrao: Optional[float]
+) -> str:
     """
     Classifica a tendência de vendas com base na inclinação da reta
-    de regressão linear sobre a série semanal, relativizada pela
-    média semanal de vendas.
+    de regressão linear sobre a série semanal, julgada em relação ao
+    seu próprio erro padrão (ver `_erro_padrao_inclinacao`) — ou
+    seja, em relação ao ruído real observado nesta série específica,
+    em vez de um percentual fixo arbitrário aplicado a todo produto
+    ou categoria indistintamente.
 
-    Isso evita classificar como "crescimento" ou "queda" variações
-    pequenas em relação ao volume normalmente vendido.
+    Quando o erro padrão não pôde ser calculado (série muito curta),
+    cai no critério mais simples de sinal da inclinação.
     """
-    if inclinacao is None or media_semanal is None:
+    if inclinacao is None:
         return "indefinida"
 
-    if media_semanal == 0:
+    if erro_padrao is None:
         if inclinacao == 0:
             return "estável"
         return "crescimento" if inclinacao > 0 else "queda"
 
-    variacao_relativa = inclinacao / media_semanal
+    if erro_padrao == 0:
+        if inclinacao == 0:
+            return "estável"
+        return "crescimento" if inclinacao > 0 else "queda"
 
-    if abs(variacao_relativa) < LIMIAR_TENDENCIA_ESTAVEL:
+    # Estatística de teste: quantos erros padrão a inclinação
+    # observada está distante de zero. Abaixo do limiar de
+    # significância, a inclinação não é distinguível de ruído.
+    estatistica_t = inclinacao / erro_padrao
+
+    # 1.96 é o múltiplo convencional de erro padrão para um teste de
+    # significância aproximado a ~95% de confiança (distribuição
+    # normal), não um valor calibrado nos dados do Kairos: a
+    # dispersão real da série (quem de fato varia de produto para
+    # produto) já foi incorporada no cálculo de `erro_padrao`.
+    if abs(estatistica_t) < 1.96:
         return "estável"
 
     return "crescimento" if inclinacao > 0 else "queda"
@@ -209,10 +263,10 @@ def consultar_historico_vendas(
             SUM(pp.quantity) AS quantidade_vendida,
             SUM(pp.amount::numeric) AS valor_total,
             COUNT(DISTINCT pp.purchase_id) AS numero_pedidos
-        FROM purchase_product pp
-        JOIN purchase p ON p.id = pp.purchase_id
-        JOIN product pr ON pr.id = pp.product_id
-        LEFT JOIN category c ON c.id = pr.category_id
+        FROM purchase_products pp
+        JOIN purchases p ON p.id = pp.purchase_id
+        JOIN products pr ON pr.id = pp.product_id
+        LEFT JOIN categories c ON c.id = pr.category_id
         WHERE p.status = %(status_concluido)s
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
           AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
@@ -284,8 +338,15 @@ def analisar_tendencia_vendas(
     indices = [float(indice) for _, _, indice in linhas]
 
     media_semanal = statistics.mean(quantidades)
-    inclinacao, _ = _regressao_linear(indices, quantidades)
-    tendencia = _classificar_tendencia(inclinacao, media_semanal)
+    inclinacao, intercepto = _regressao_linear(indices, quantidades)
+
+    erro_padrao = (
+        _erro_padrao_inclinacao(indices, quantidades, inclinacao, intercepto)
+        if inclinacao is not None
+        else None
+    )
+
+    tendencia = _classificar_tendencia(inclinacao, erro_padrao)
 
     resultados = [
         f"Tendência calculada sobre as últimas {len(linhas)} semanas: {tendencia}",

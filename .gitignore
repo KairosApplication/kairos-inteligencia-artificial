@@ -8,3 +8,9 @@
 .env
 
 __pycache__
+
+.venv/
+.pytest_cache/
+.cache/
+*.py[cod]
+tmp/
