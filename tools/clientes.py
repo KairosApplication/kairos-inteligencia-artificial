@@ -6,16 +6,11 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
+from tools.query_policy import validar_limite, validar_periodo
 
 
 # Status que representa uma compra efetivamente concluída.
 STATUS_VENDA_CONCLUIDA = "COMPLETED"
-
-LIMITE_PADRAO_RESULTADOS = settings.limite_padrao_resultados
-LIMITE_MAXIMO_RESULTADOS = settings.limite_maximo_resultados
-
-DIAS_PADRAO_HISTORICO = 180
-DIAS_MAXIMO_HISTORICO = 730
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
@@ -47,24 +42,12 @@ def _normalizar_cpf(cpf: Optional[str]) -> Optional[str]:
     return apenas_digitos or None
 
 
-def _normalizar_intervalo(valor: int, padrao: int, maximo: int) -> int:
-    """
-    Garante que um intervalo numérico (dias, limite) esteja dentro
-    de uma faixa segura, evitando consultas sem limite definido ou
-    períodos exagerados.
-    """
-    if not valor or valor <= 0:
-        return padrao
-
-    return min(valor, maximo)
-
-
 @tool
 def localizar_cliente(
     nome: Optional[str] = None,
     email: Optional[str] = None,
     cpf: Optional[str] = None,
-    limite: int = LIMITE_PADRAO_RESULTADOS
+    limite: Optional[int] = None
 ) -> str:
     """
     Localiza clientes do Kairos pelo nome completo (ou parte dele),
@@ -90,7 +73,9 @@ def localizar_cliente(
     if not (nome_normalizado or email_normalizado or cpf_normalizado):
         return "Informe ao menos um filtro: nome, email ou cpf."
 
-    limite = _normalizar_intervalo(limite, LIMITE_PADRAO_RESULTADOS, LIMITE_MAXIMO_RESULTADOS)
+    limite, aviso = validar_limite(limite)
+    if aviso:
+        return aviso
 
     sql = """
         SELECT
@@ -121,7 +106,7 @@ def localizar_cliente(
     if not linhas:
         return "Nenhum cliente encontrado para os filtros informados."
 
-    resultados = []
+    resultados = [f"Até {limite} clientes encontrados para os filtros informados:"]
 
     for customer_id, primeiro_nome, sobrenome, email_cliente in linhas:
         resultados.append(
@@ -135,8 +120,8 @@ def localizar_cliente(
 @tool
 def consultar_historico_compras_cliente(
     customer_id: int,
-    dias: int = DIAS_PADRAO_HISTORICO,
-    limite: int = LIMITE_PADRAO_RESULTADOS
+    dias: Optional[int] = None,
+    limite: Optional[int] = None
 ) -> str:
     """
     Consulta o histórico de compras concluídas de um cliente
@@ -151,12 +136,16 @@ def consultar_historico_compras_cliente(
 
     Parâmetros:
         customer_id: identificador do cliente.
-        dias: quantidade de dias anteriores à data atual
-            considerados no histórico.
+        dias: últimos N dias confirmados pelo usuário; ausência pede
+            esclarecimento sem consultar o banco.
         limite: quantidade máxima de produtos retornados.
     """
-    dias = _normalizar_intervalo(dias, DIAS_PADRAO_HISTORICO, DIAS_MAXIMO_HISTORICO)
-    limite = _normalizar_intervalo(limite, LIMITE_PADRAO_RESULTADOS, LIMITE_MAXIMO_RESULTADOS)
+    dias, aviso = validar_periodo(dias, "dias", settings.historico_clientes_max_dias, "De quantos dias anteriores você quer consultar as compras deste cliente?")
+    if aviso:
+        return aviso
+    limite, aviso = validar_limite(limite)
+    if aviso:
+        return aviso
 
     sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
 
@@ -199,7 +188,7 @@ def consultar_historico_compras_cliente(
     if not linhas:
         return f"O cliente {customer_id} não possui compras concluídas nos últimos {dias} dias."
 
-    resultados = [f"Histórico de compras do cliente {customer_id} nos últimos {dias} dias:"]
+    resultados = [f"Histórico de compras do cliente {customer_id} nos últimos {dias} dias (até {limite} produtos):"]
 
     for nome, categoria, quantidade, valor_total, numero_pedidos, ultima_compra in linhas:
         resultados.append(
@@ -214,7 +203,8 @@ def consultar_historico_compras_cliente(
 @tool
 def sugerir_ofertas_personalizadas(
     customer_id: int,
-    limite: int = 10
+    limite: Optional[int] = None,
+    dias: Optional[int] = None
 ) -> str:
     """
     Sugere promoções atualmente vigentes que sejam relevantes para
@@ -234,8 +224,18 @@ def sugerir_ofertas_personalizadas(
     Parâmetros:
         customer_id: identificador do cliente.
         limite: quantidade máxima de ofertas retornadas.
+        dias: últimos N dias de compras confirmados pelo usuário;
+            se ausente, pede esclarecimento antes de recomendar ofertas.
     """
-    limite = _normalizar_intervalo(limite, 10, LIMITE_MAXIMO_RESULTADOS)
+    dias, aviso = validar_periodo(
+        dias, "dias", settings.historico_clientes_max_dias,
+        "As ofertas devem considerar as compras dos últimos quantos dias?",
+    )
+    if aviso:
+        return aviso
+    limite, aviso = validar_limite(limite, padrao=settings.limite_padrao_recomendacoes)
+    if aviso:
+        return aviso
 
     sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
 
@@ -246,6 +246,7 @@ def sugerir_ofertas_personalizadas(
             JOIN purchase_products pp ON pp.purchase_id = p.id
             WHERE p.customer_id = %(customer_id)s
               AND p.status = %(status_concluido)s
+              AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
         ),
         categorias_cliente AS (
             SELECT DISTINCT pr.category_id
@@ -282,6 +283,7 @@ def sugerir_ofertas_personalizadas(
         linhas = _executar_consulta(sql_ofertas, {
             "customer_id": customer_id,
             "status_concluido": STATUS_VENDA_CONCLUIDA,
+            "dias": dias,
             "limite": limite
         })
 
@@ -294,7 +296,7 @@ def sugerir_ofertas_personalizadas(
             f"compras do cliente {customer_id} foi encontrada."
         )
 
-    resultados = [f"Ofertas vigentes relevantes para o cliente {customer_id}:"]
+    resultados = [f"Ofertas vigentes relevantes para o cliente {customer_id} (compras dos últimos {dias} dias; até {limite} ofertas):"]
 
     for nome, categoria, desconto, descricao, data_fim, preco_atual, mesmo_produto in linhas:
         motivo = "produto já comprado" if mesmo_produto else "categoria já comprada"

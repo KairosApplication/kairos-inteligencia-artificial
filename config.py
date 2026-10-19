@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     db_statement_timeout_ms: int = Field(default=10000, ge=1)
     limite_padrao_resultados: int = Field(default=20, ge=1)
     limite_maximo_resultados: int = Field(default=50, ge=1)
+    limite_padrao_recomendacoes: int = Field(default=10, ge=1)
+    historico_vendas_max_dias: int = Field(default=365, ge=1)
+    historico_clientes_max_dias: int = Field(default=730, ge=1)
+    tendencia_max_semanas: int = Field(default=52, ge=3)
+    previsao_max_semanas: int = Field(default=12, ge=1)
     memorias_contexto_limite: int = Field(default=5, ge=1)
 
     @model_validator(mode="after")
@@ -58,6 +63,8 @@ class Settings(BaseSettings):
             raise ValueError("DB_POOL_MIN não pode exceder DB_POOL_MAX.")
         if self.limite_padrao_resultados > self.limite_maximo_resultados:
             raise ValueError("O limite padrão de resultados não pode exceder o máximo.")
+        if self.limite_padrao_recomendacoes > self.limite_maximo_resultados:
+            raise ValueError("O limite padrão de recomendações não pode exceder o máximo.")
         if self.resumo_manter_mensagens % 2 or self.resumo_lote_mensagens % 2:
             raise ValueError("Retenção e lote de resumo devem preservar pares de mensagens.")
         return self

@@ -5,12 +5,7 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
-
-
-LIMITE_PADRAO_RESULTADOS = settings.limite_padrao_resultados
-LIMITE_MAXIMO_RESULTADOS = settings.limite_maximo_resultados
-
-
+from tools.query_policy import validar_limite
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
@@ -40,17 +35,6 @@ def _classificar_severidade(
     return "adequado"
 
 
-def _normalizar_limite(limite: int) -> int:
-    """
-    Garante que o limite de resultados solicitado esteja dentro
-    de uma faixa segura, evitando consultas sem limite definido.
-    """
-    if not limite or limite <= 0:
-        return LIMITE_PADRAO_RESULTADOS
-
-    return min(limite, LIMITE_MAXIMO_RESULTADOS)
-
-
 def _like(valor: Optional[str]) -> Optional[str]:
     """
     Prepara um valor de texto para busca parcial com ILIKE.
@@ -73,14 +57,12 @@ def _formatar_percentual(percentual) -> str:
     return f"{percentual * 100:.0f}%"
 
 
-
-
 @tool
 def consultar_niveis_estoque(
     produto: Optional[str] = None,
     setor: Optional[str] = None,
     somente_criticos: bool = False,
-    limite: int = LIMITE_PADRAO_RESULTADOS
+    limite: Optional[int] = None
 ) -> str:
     """
     Consulta o nível de estoque de produtos nas gôndolas do Kairos.
@@ -97,7 +79,9 @@ def consultar_niveis_estoque(
             classificados como "crítico" ou "ruptura".
         limite: quantidade máxima de resultados retornados.
     """
-    limite = _normalizar_limite(limite)
+    limite, aviso = validar_limite(limite)
+    if aviso:
+        return aviso
 
     sql = """
         SELECT
@@ -141,7 +125,7 @@ def consultar_niveis_estoque(
 
     corte_critico, corte_baixo = settings.estoque_limite_critico, settings.estoque_limite_baixo
 
-    resultados = []
+    resultados = [f"Até {limite} resultados para os filtros informados:"]
 
     for nome, gondola_id, setor_nome, quantidade, capacidade, percentual in linhas:
         severidade = _classificar_severidade(
@@ -160,7 +144,7 @@ def consultar_niveis_estoque(
             f"Ocupação: {_formatar_percentual(percentual)} | Severidade: {severidade}"
         )
 
-    if not resultados:
+    if len(resultados) == 1:
         return "Nenhum produto crítico encontrado para os filtros informados."
 
     return "\n".join(resultados)
@@ -170,7 +154,7 @@ def consultar_niveis_estoque(
 def listar_alertas_reposicao(
     setor: Optional[str] = None,
     apenas_pendentes: bool = True,
-    limite: int = LIMITE_PADRAO_RESULTADOS
+    limite: Optional[int] = None
 ) -> str:
     """
     Lista os alertas de ruptura de estoque registrados no sistema.
@@ -184,7 +168,9 @@ def listar_alertas_reposicao(
             alertas que ainda não foram resolvidos.
         limite: quantidade máxima de resultados retornados.
     """
-    limite = _normalizar_limite(limite)
+    limite, aviso = validar_limite(limite)
+    if aviso:
+        return aviso
 
     sql = """
         SELECT
@@ -220,7 +206,7 @@ def listar_alertas_reposicao(
     if not linhas:
         return "Nenhum alerta encontrado para os filtros informados."
 
-    resultados = []
+    resultados = [f"Até {limite} resultados para os filtros informados:"]
 
     for alerta_id, descricao, status, data_ruptura, data_resolucao, produto, gondola_id, setor_nome in linhas:
         situacao = "resolvido" if data_resolucao else "pendente"
@@ -238,7 +224,7 @@ def listar_alertas_reposicao(
 @tool
 def recomendar_prioridades_reposicao(
     setor: Optional[str] = None,
-    limite: int = 10
+    limite: Optional[int] = None
 ) -> str:
     """
     Recomenda prioridades de reposição com base no nível de estoque
@@ -251,7 +237,9 @@ def recomendar_prioridades_reposicao(
         setor: filtra pelo nome (ou parte do nome) do setor da loja.
         limite: quantidade máxima de recomendações retornadas.
     """
-    limite = _normalizar_limite(limite)
+    limite, aviso = validar_limite(limite, padrao=settings.limite_padrao_recomendacoes)
+    if aviso:
+        return aviso
 
     sql = """
         SELECT
@@ -302,7 +290,7 @@ def recomendar_prioridades_reposicao(
 
     corte_critico, corte_baixo = settings.estoque_limite_critico, settings.estoque_limite_baixo
 
-    resultados = []
+    resultados = [f"Até {limite} resultados para os filtros informados:"]
 
     for posicao, linha in enumerate(linhas, start=1):
         nome, gondola_id, setor_nome, quantidade, capacidade, percentual, alerta_ativo = linha

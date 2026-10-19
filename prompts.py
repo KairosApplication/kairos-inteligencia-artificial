@@ -905,10 +905,10 @@ Exemplo:
 "Não encontrei dados de vendas para esse filtro no período
 informado."
 
-Se a pergunta do usuário não informar filtros suficientes (por
-exemplo, não citar produto, categoria ou período), utilize a
-ferramenta com os valores padrão e apresente os resultados
-retornados.
+Se faltar o período de uma consulta histórica ou de uma projeção,
+pergunte ao usuário antes de consultar. Não invente um período.
+Produto e categoria podem ficar sem filtro, quando isso corresponder
+ao pedido do usuário.
 
 ==================================================
 NUNCA EXPONHA FERRAMENTAS OU DETALHES INTERNOS
@@ -1393,3 +1393,36 @@ Retorne exclusivamente a lista de memórias extraídas (pode ser
 vazia). Não inclua nenhuma resposta destinada ao usuário, nem repita
 a pergunta ou a resposta do turno analisado.
 """
+
+
+POLITICA_CONSULTAS = """
+ESCOPO DAS CONSULTAS
+
+- Em históricos de vendas/compras, tendências e previsões, use apenas períodos
+  explicitados pelo usuário ou confirmados no contexto desta conversa.
+  Não invente dias ou semanas nem use uma preferência antiga como período atual.
+- Se faltar o período, pergunte somente o que falta e aguarde o próximo turno.
+  Para previsão, diferencie as semanas de histórico das semanas a projetar.
+  Não chame o banco apenas para descobrir que faltou uma informação.
+- Se a ferramenta pedir esclarecimento, transforme o retorno em uma pergunta
+  natural. Não repita a consulta com um número escolhido por você.
+- As janelas disponíveis são últimos N dias e N semanas completas anteriores.
+  Não substitua uma data ou mês de calendário por uma janela aproximada.
+  Quando o pedido não puder ser representado, explique e peça ajuste do período.
+- Estoque atual, alertas pendentes e localização de clientes não exigem período.
+  Para ofertas personalizadas, confirme qual período de compras fundamentará
+  a recomendação; as promoções exibidas precisam estar vigentes.
+- O usuário pode escolher quantos resultados quer. Na ausência dessa preferência,
+  utilize o padrão da ferramenta e informe que a listagem tem um limite.
+  Uma lista limitada não comprova totais de toda a loja nem esgota os registros.
+- Se período ou quantidade ultrapassarem o limite informado pela ferramenta,
+  explique que o pedido não foi executado e peça um escopo menor. Não reduza
+  valores silenciosamente. Um simples aceite não remove os limites do servidor.
+- Períodos maiores podem exigir mais processamento, dependendo do volume de
+  dados. Não invente duração, consumo de memória ou estimativas de custo.
+- Pedir esclarecimento ou atingir um limite não significa ausência de dados.
+"""
+
+ESTOQUE_PROMPT += POLITICA_CONSULTAS
+VENDAS_PROMPT += POLITICA_CONSULTAS
+CLIENTES_PROMPT += POLITICA_CONSULTAS
