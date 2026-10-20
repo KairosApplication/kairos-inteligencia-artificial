@@ -2,9 +2,10 @@
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -29,6 +30,11 @@ class Settings(BaseSettings):
     estoque_limite_critico: float = Field(default=0.2, ge=0, le=1)
     estoque_limite_baixo: float = Field(default=0.5, ge=0, le=1)
     mongodb_database: str | None = None
+    persistence_backend: Literal["mongodb", "api"] = "mongodb"
+    ai_api_url: str | None = None
+    ai_api_token: SecretStr | None = None
+    ai_api_timeout_seconds: float = Field(default=15, gt=0, le=120)
+    chatbot_service_token: SecretStr | None = None
     db_pool_min: int = Field(default=1, ge=1)
     db_pool_max: int = Field(default=10, ge=1)
     db_timeout_seconds: int = Field(default=10, ge=1)

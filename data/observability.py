@@ -30,6 +30,8 @@ from bson import ObjectId
 
 from data.langsmith_client import buscar_metricas_run
 from data.mongodb import get_database
+from data.ai_api import via_api
+from data import api_observability
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +71,8 @@ def iniciar_execucao(user_id: int, conversation_id: ObjectId, pergunta: str) -> 
     identificador (`execution_id`) que amarra os demais registros
     (traces, evento do guardrail, avaliação do juiz) a esta execução.
     """
+    if via_api():
+        return api_observability.iniciar_execucao(user_id, conversation_id, pergunta)
     colecao = get_database()[NOME_EXECUCOES]
 
     documento = {
@@ -105,6 +109,8 @@ def finalizar_execucao(execution_id: ObjectId, status: str, resposta: str) -> No
     fica definitivo quando o último trace terminar de ser
     complementado.
     """
+    if via_api():
+        return api_observability.finalizar_execucao(execution_id, status, resposta)
     colecao_execucoes = get_database()[NOME_EXECUCOES]
     colecao_traces = get_database()[NOME_TRACES]
 
@@ -113,9 +119,10 @@ def finalizar_execucao(execution_id: ObjectId, status: str, resposta: str) -> No
     latencia_ms = None
 
     if execucao and execucao.get("started_at"):
-        inicio = datetime.strptime(
-            execucao["started_at"], "%Y-%m-%d %H:%M:%S"
-        ).replace(tzinfo=timezone.utc)
+        inicio = execucao["started_at"]
+        if isinstance(inicio, str):
+            inicio = datetime.fromisoformat(inicio.replace("Z", "+00:00"))
+        inicio = inicio.replace(tzinfo=inicio.tzinfo or timezone.utc)
         latencia_ms = int((_agora_dt() - inicio).total_seconds() * 1000)
 
     traces = list(
@@ -184,6 +191,10 @@ def registrar_trace_agente(
     não possuem run do LangSmith; nesse caso `langsmith_run_id` deve
     ser omitido e os campos de métricas permanecem None.
     """
+    if via_api():
+        return api_observability.registrar_trace_agente(
+            execution_id, agent_name, status, started_at, completed_at, entrada, saida, langsmith_run_id,
+        )
     colecao = get_database()[NOME_TRACES]
 
     latencia_ms = int((completed_at - started_at).total_seconds() * 1000)
@@ -305,6 +316,8 @@ def registrar_evento_guardrail(
     Guardrail de Segurança sobre a mensagem do usuário de uma
     execução.
     """
+    if via_api():
+        return api_observability.registrar_evento_guardrail(execution_id, bloqueado, categoria, motivo)
     colecao = get_database()[NOME_GUARDRAIL_EVENTS]
 
     colecao.insert_one({
@@ -326,6 +339,8 @@ def registrar_avaliacao_juiz(execution_id: ObjectId, aprovado: bool, motivo: str
     Registra, na collection `judge_evaluations`, a decisão do Juiz
     sobre a resposta produzida pelo especialista de uma execução.
     """
+    if via_api():
+        return api_observability.registrar_avaliacao_juiz(execution_id, aprovado, motivo)
     colecao = get_database()[NOME_JUDGE_EVALUATIONS]
 
     colecao.insert_one({
@@ -352,6 +367,8 @@ def registrar_feedback(
     comentário opcional) dada pelo usuário sobre a resposta final de
     uma execução.
     """
+    if via_api():
+        return api_observability.registrar_feedback(execution_id, user_id, rating, comment)
     colecao = get_database()[NOME_FEEDBACK]
 
     colecao.insert_one({
@@ -379,6 +396,8 @@ def registrar_memorias(user_id: int, memorias: list[dict]) -> None:
     if not memorias:
         return
 
+    if via_api():
+        return api_observability.registrar_memorias(user_id, memorias)
     colecao = get_database()[NOME_USER_MEMORY]
 
     novas_memorias = [
@@ -410,6 +429,8 @@ def carregar_memorias(user_id: int) -> list[dict]:
     usuário, ordenadas das mais importantes para as menos
     importantes.
     """
+    if via_api():
+        return api_observability.carregar_memorias(user_id)
     colecao = get_database()[NOME_USER_MEMORY]
 
     documento = colecao.find_one({"user_id": user_id})

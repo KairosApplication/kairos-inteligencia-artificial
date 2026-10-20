@@ -19,6 +19,8 @@ from bson import ObjectId
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from data.mongodb import get_database
+from data.ai_api import get_ai_api, via_api, PersistenceError
+from data.request_context import chat_context
 
 NOME_COLECAO = "conversations"
 
@@ -35,6 +37,8 @@ def obter_ou_criar_conversa_ativa(user_id: int) -> dict:
     Obtém a conversa com status ACTIVE mais recente do usuário,
     criando uma nova (vazia) caso não exista nenhuma.
     """
+    if via_api():
+        return get_ai_api().active_conversation(user_id)
     colecao = get_database()[NOME_COLECAO]
 
     conversa = colecao.find_one(
@@ -72,6 +76,17 @@ def obter_conversa_por_id(conversation_id: ObjectId) -> Optional[dict]:
     já que podem ter sido atualizados pelo middleware de sumarização
     no turno anterior.
     """
+    if via_api():
+        context = chat_context.get()
+        if context is not None and context.conversation_id != conversation_id:
+            raise PermissionError("Conversa diferente do contexto autorizado.")
+        try:
+            return (get_ai_api().conversation(context.user_id, conversation_id) if context is not None
+                    else get_ai_api().get("conversations", conversation_id))
+        except PersistenceError as error:
+            if error.status == 404:
+                return None
+            raise
     colecao = get_database()[NOME_COLECAO]
     return colecao.find_one({"_id": conversation_id})
 
@@ -126,6 +141,14 @@ def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> 
     histórico bruto da conversa, e atualiza o horário da última
     atividade.
     """
+    if via_api():
+        context = chat_context.get()
+        conversa = obter_conversa_por_id(conversation_id)
+        if conversa is None:
+            raise RuntimeError("Conversa não encontrada.")
+        get_ai_api().append_turn(conversa["user_id"], conversation_id, pergunta, resposta,
+                                 context.request_id if context is not None else str(ObjectId()))
+        return
     colecao = get_database()[NOME_COLECAO]
 
     novas_mensagens = [
@@ -159,6 +182,12 @@ def registrar_resumo(
     """Troca o resumo somente se a versão lida ainda é a atual."""
     if marcador_anterior < 0 or marcador_novo <= marcador_anterior:
         raise ValueError("Marcadores de resumo inválidos.")
+    if via_api():
+        conversa = obter_conversa_por_id(conversation_id)
+        if conversa is None:
+            raise RuntimeError("Conversa não encontrada.")
+        return get_ai_api().summarize(conversa["user_id"], conversation_id, resumo,
+                                      marcador_anterior, marcador_novo, resumo_anterior)
     resultado = get_database()[NOME_COLECAO].update_one(
         {
             "_id": conversation_id,
