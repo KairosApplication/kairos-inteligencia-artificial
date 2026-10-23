@@ -21,6 +21,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from data.mongodb import get_database
 from data.ai_api import get_ai_api, via_api, PersistenceError
 from data.request_context import chat_context
+from data.access import principal
 
 NOME_COLECAO = "conversations"
 
@@ -81,8 +82,13 @@ def obter_conversa_por_id(conversation_id: ObjectId) -> Optional[dict]:
         if context is not None and context.conversation_id != conversation_id:
             raise PermissionError("Conversa diferente do contexto autorizado.")
         try:
-            return (get_ai_api().conversation(context.user_id, conversation_id) if context is not None
-                    else get_ai_api().get("conversations", conversation_id))
+            document = (get_ai_api().conversation(context.user_id, conversation_id) if context is not None
+                        else get_ai_api().get("conversations", conversation_id))
+            identity = principal()
+            if identity is not None and (document.get("access_scope") != identity.scope
+                                         or document.get("user_id") != identity.user_id):
+                raise PermissionError("Conversa fora do escopo de acesso atual.")
+            return document
         except PersistenceError as error:
             if error.status == 404:
                 return None

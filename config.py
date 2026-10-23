@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     ai_api_token: SecretStr | None = None
     ai_api_timeout_seconds: float = Field(default=15, gt=0, le=120)
     chatbot_service_token: SecretStr | None = None
+    spring_auth_url: str | None = None
+    spring_session_cookie_name: str = "JSESSIONID"
+    chat_allowed_origins: list[str] = Field(default_factory=list)
+    firebase_project_id: str | None = None
     db_pool_min: int = Field(default=1, ge=1)
     db_pool_max: int = Field(default=10, ge=1)
     db_timeout_seconds: int = Field(default=10, ge=1)

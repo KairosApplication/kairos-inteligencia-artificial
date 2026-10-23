@@ -6,6 +6,7 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
+from data.access import require_domain
 from tools.query_policy import validar_limite, validar_periodo
 
 
@@ -16,6 +17,7 @@ STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
+    require_domain("vendas")
     return executar_consulta(sql, params)
 
 

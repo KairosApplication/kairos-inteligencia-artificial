@@ -6,6 +6,7 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
+from data.access import customer_scope
 from tools.query_policy import validar_limite, validar_periodo
 
 
@@ -14,6 +15,10 @@ STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
+    if "customer_id" in params:
+        customer_scope(params["customer_id"])
+    else:
+        params = {**params, "own_customer_id": customer_scope()}
     return executar_consulta(sql, params)
 
 
@@ -65,6 +70,9 @@ def localizar_cliente(
         cpf: CPF do cliente, com ou sem pontuação.
         limite: quantidade máxima de clientes retornados.
     """
+    own_id = customer_scope()
+    if own_id is not None:
+        return f"Seu customer_id é {own_id}. Use-o para consultar suas compras ou ofertas."
     nome_normalizado = _like(nome)
     email_normalizado = _like(email)
     cpf_normalizado = _normalizar_cpf(cpf)
@@ -85,7 +93,8 @@ def localizar_cliente(
             u.email
         FROM customers c
         JOIN users u ON u.id = c.users_id
-        WHERE (%(nome)s IS NULL OR (u.name || ' ' || u.last_name) ILIKE %(nome)s)
+        WHERE (%(own_customer_id)s::bigint IS NULL OR c.id = %(own_customer_id)s)
+          AND (%(nome)s IS NULL OR (u.name || ' ' || u.last_name) ILIKE %(nome)s)
           AND (%(email)s IS NULL OR u.email ILIKE %(email)s)
           AND (%(cpf)s IS NULL OR regexp_replace(u.cpf, '\\D', '', 'g') = %(cpf)s)
         ORDER BY u.name, u.last_name

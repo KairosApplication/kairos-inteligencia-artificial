@@ -6,33 +6,26 @@ from config import settings
 from data.model_fallback import GroqRateLimitFallback, com_fallback_de_limite
 from schemas import AvaliacaoGuardrail, AvaliacaoJuiz, ExtracaoMemoria
 
-# Modelos utilizados pelo projeto, visíveis para avaliação e versionados.
-OPENAI_CHAT_MODEL = "gpt-4.1-mini"
-OPENAI_FAST_MODEL = "gpt-4.1-mini"
-GROQ_CHAT_MODEL = "openai/gpt-oss-120b"
-GROQ_FAST_MODEL = "openai/gpt-oss-20b"
-CHAT_TEMPERATURE = 0.2
-FAST_TEMPERATURE = 0
+# GPT-6 Luna exige reasoning_effort="none" para tools em Chat Completions.
+llm_principal = ChatOpenAI(
+    model="gpt-6-luna", temperature=0.6, max_retries=0,
+    reasoning_effort="none", use_responses_api=False,
+    timeout=settings.llm_timeout_seconds, max_completion_tokens=settings.llm_max_tokens,
+)
+llm_rapido = ChatOpenAI(
+    model="gpt-6-luna", temperature=0, max_retries=0,
+    reasoning_effort="none", use_responses_api=False,
+    timeout=settings.llm_timeout_seconds, max_completion_tokens=settings.llm_max_tokens,
+)
 
-
-def _openai(model, temperature):
-    return ChatOpenAI(
-        model=model, temperature=temperature, max_retries=0,
-        timeout=settings.llm_timeout_seconds, max_tokens=settings.llm_max_tokens,
-    )
-
-
-def _groq(model, temperature):
-    return ChatGroq(
-        model=model, temperature=temperature, max_retries=0,
-        timeout=settings.llm_timeout_seconds, max_tokens=settings.llm_max_tokens,
-    )
-
-
-llm_principal = _openai(OPENAI_CHAT_MODEL, CHAT_TEMPERATURE)
-llm_rapido = _openai(OPENAI_FAST_MODEL, FAST_TEMPERATURE)
-groq_principal = _groq(GROQ_CHAT_MODEL, CHAT_TEMPERATURE)
-groq_rapido = _groq(GROQ_FAST_MODEL, FAST_TEMPERATURE)
+groq_principal = ChatGroq(
+    model="openai/gpt-oss-120b", temperature=0.6, max_retries=0,
+    timeout=settings.llm_timeout_seconds, max_tokens=settings.llm_max_tokens,
+)
+groq_rapido = ChatGroq(
+    model="openai/gpt-oss-20b", temperature=0, max_retries=0,
+    timeout=settings.llm_timeout_seconds, max_tokens=settings.llm_max_tokens,
+)
 
 
 def fallback_middleware(rapido=False):

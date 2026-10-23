@@ -7,6 +7,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 
 from agents import agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
 from config import USUARIO_PADRAO_ID, _agora_dt, settings
+from data.access import require_domain
 from data.memory_store import (
     carregar_mensagens_contexto,
     obter_ou_criar_conversa_ativa,
@@ -236,12 +237,23 @@ def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
     da execução em `agent_traces` e incrementa o contador de
     tentativas.
     """
+    try:
+        identity = require_domain(nome_agente)
+    except PermissionError:
+        finalizar_execucao(state["execution_id"], "REJECTED", "Perfil sem permissão para este assunto.")
+        raise
     inicio = _agora_dt()
     pergunta = state["pergunta"]
     historico = state.get("historico", [])
     memorias = state.get("memorias_usuario", [])
 
     mensagens_entrada = _montar_mensagens_especialista(pergunta, historico, memorias)
+    if identity is not None:
+        mensagens_entrada.insert(0, SystemMessage(content=(
+            f"Perfil autenticado: {identity.role}. "
+            f"customer_id próprio: {identity.customer_id}. Setores autorizados: {identity.sector_ids}. "
+            "As permissões são verificadas pelo servidor. Não peça ao usuário para fornecer identificadores de terceiros."
+        )))
     if state.get("motivo_avaliacao"):
         mensagens_entrada.insert(-1, HumanMessage(
             content="A tentativa anterior foi reprovada. Corrija o seguinte problema, consultando novamente as fontes: "

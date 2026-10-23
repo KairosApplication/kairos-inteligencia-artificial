@@ -4,6 +4,7 @@ import threading
 from datetime import datetime, timezone
 
 from data.ai_api import get_ai_api
+from data.access import principal
 from data.langsmith_client import buscar_metricas_run
 
 logger = logging.getLogger(__name__)
@@ -93,8 +94,10 @@ def registrar_feedback(execution_id, user_id, rating, comment=None):
 
 def registrar_memorias(user_id, memorias):
     if memorias:
+        identity = principal()
         get_ai_api().append_memories(user_id, [
-            {"type": m["tipo"], "content": m["conteudo"], "importance": m["importancia"]} for m in memorias
+            {"type": m["tipo"], "content": m["conteudo"], "importance": m["importancia"],
+             **({"access_scope": identity.scope} if identity else {})} for m in memorias
         ])
 
 
@@ -102,4 +105,8 @@ def carregar_memorias(user_id):
     # Matches the deterministic record selected by the runtime append operation.
     documents = get_ai_api().list("user-memories", userId=user_id)
     document = next(documents, {})
-    return sorted(document.get("memories") or [], key=lambda m: m.get("importance", 0), reverse=True)
+    identity = principal()
+    memories = document.get("memories") or []
+    if identity is not None:
+        memories = [m for m in memories if m.get("access_scope") == identity.scope]
+    return sorted(memories, key=lambda m: m.get("importance", 0), reverse=True)
