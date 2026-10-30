@@ -25,6 +25,16 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.chat_allowed_origins, 
 bearer = HTTPBearer(auto_error=False)
 
 
+@app.middleware("http")
+async def preserve_auth_cookies(request, call_next):
+    response = await call_next(request)
+    for cookie in getattr(request.state, "auth_set_cookies", []):
+        response.headers.append("set-cookie", cookie)
+    if request.url.path.startswith("/api/v1/me/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def service_access(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
     token = settings.chatbot_service_token
     if token is None or len(token.get_secret_value()) < 32:
@@ -210,7 +220,7 @@ def active_user_conversation(identity):
 
 @app.get("/api/v1/me/chat", dependencies=[Depends(user_persistence)])
 def my_access(identity: Principal = Depends(authenticated_user)):
-    return {"userId": identity.user_id, "role": identity.role, "customerId": identity.customer_id,
+    return {"userId": identity.user_id, "role": identity.role, "companyId": identity.company_id, "customerId": identity.customer_id,
             "sectorIds": identity.sector_ids,
             "domains": [name for name in ("faq", "estoque", "vendas", "clientes") if identity.allows(name)]}
 

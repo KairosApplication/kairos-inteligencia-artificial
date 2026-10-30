@@ -5,12 +5,12 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
-from data.access import stock_sectors
+from data.access import stock_sectors, company_scope
 from tools.query_policy import validar_limite
 
 
 def _executar_consulta(sql: str, params: dict) -> list:
-    return executar_consulta(sql, {**params, "allowed_sectors": stock_sectors()})
+    return executar_consulta(sql, {**params, "allowed_sectors": stock_sectors(), "company_id": company_scope()})
 
 
 def _classificar_severidade(
@@ -100,6 +100,7 @@ def consultar_niveis_estoque(
         JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(produto)s IS NULL OR p.name ILIKE %(produto)s)
           AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
+          AND (%(company_id)s::bigint IS NULL OR (sec.company_id = %(company_id)s AND (p.company_id = %(company_id)s OR p.id IS NULL)))
           AND (%(allowed_sectors)s::bigint[] IS NULL OR sec.id = ANY(%(allowed_sectors)s::bigint[]))
           AND (
               %(somente_criticos)s = FALSE
@@ -191,6 +192,7 @@ def listar_alertas_reposicao(
         LEFT JOIN products p ON p.id = al.product_id
         WHERE (%(pendentes)s = FALSE OR al.resolution_date IS NULL)
           AND (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
+          AND (%(company_id)s::bigint IS NULL OR (sec.company_id = %(company_id)s AND (p.company_id = %(company_id)s OR p.id IS NULL)))
           AND (%(allowed_sectors)s::bigint[] IS NULL OR sec.id = ANY(%(allowed_sectors)s::bigint[]))
         ORDER BY al.stockout_date DESC NULLS LAST
         LIMIT %(limite)s
@@ -266,6 +268,7 @@ def recomendar_prioridades_reposicao(
         JOIN aisles a ON a.id = s.aisle_id
         JOIN sectors sec ON sec.id = a.sector_id
         WHERE (%(setor)s IS NULL OR sec.name ILIKE %(setor)s)
+          AND (%(company_id)s::bigint IS NULL OR (sec.company_id = %(company_id)s AND (p.company_id = %(company_id)s OR p.id IS NULL)))
           AND (%(allowed_sectors)s::bigint[] IS NULL OR sec.id = ANY(%(allowed_sectors)s::bigint[]))
         ORDER BY
             CASE

@@ -6,7 +6,7 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
-from data.access import customer_scope
+from data.access import customer_scope, company_scope
 from tools.query_policy import validar_limite, validar_periodo
 
 
@@ -19,7 +19,7 @@ def _executar_consulta(sql: str, params: dict) -> list:
         customer_scope(params["customer_id"])
     else:
         params = {**params, "own_customer_id": customer_scope()}
-    return executar_consulta(sql, params)
+    return executar_consulta(sql, {**params, "company_id": company_scope()})
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
@@ -93,7 +93,8 @@ def localizar_cliente(
             u.email
         FROM customers c
         JOIN users u ON u.id = c.users_id
-        WHERE (%(own_customer_id)s::bigint IS NULL OR c.id = %(own_customer_id)s)
+        WHERE (%(company_id)s::bigint IS NULL OR c.company_id = %(company_id)s)
+          AND (%(own_customer_id)s::bigint IS NULL OR c.id = %(own_customer_id)s)
           AND (%(nome)s IS NULL OR (u.name || ' ' || u.last_name) ILIKE %(nome)s)
           AND (%(email)s IS NULL OR u.email ILIKE %(email)s)
           AND (%(cpf)s IS NULL OR regexp_replace(u.cpf, '\\D', '', 'g') = %(cpf)s)
@@ -156,7 +157,7 @@ def consultar_historico_compras_cliente(
     if aviso:
         return aviso
 
-    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
+    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s AND (%(company_id)s::bigint IS NULL OR company_id = %(company_id)s) LIMIT 1"
 
     sql_historico = """
         SELECT
@@ -171,6 +172,7 @@ def consultar_historico_compras_cliente(
         JOIN products pr ON pr.id = pp.product_id
         LEFT JOIN categories cat ON cat.id = pr.category_id
         WHERE p.customer_id = %(customer_id)s
+              AND (%(company_id)s::bigint IS NULL OR EXISTS (SELECT 1 FROM customers scope_customer WHERE scope_customer.id = p.customer_id AND scope_customer.company_id = %(company_id)s))
           AND p.status = %(status_concluido)s
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
         GROUP BY pr.name, cat.category
@@ -246,7 +248,7 @@ def sugerir_ofertas_personalizadas(
     if aviso:
         return aviso
 
-    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s LIMIT 1"
+    sql_cliente = "SELECT 1 FROM customers WHERE id = %(customer_id)s AND (%(company_id)s::bigint IS NULL OR company_id = %(company_id)s) LIMIT 1"
 
     sql_ofertas = """
         WITH produtos_cliente AS (
@@ -254,6 +256,7 @@ def sugerir_ofertas_personalizadas(
             FROM purchases p
             JOIN purchase_products pp ON pp.purchase_id = p.id
             WHERE p.customer_id = %(customer_id)s
+              AND (%(company_id)s::bigint IS NULL OR EXISTS (SELECT 1 FROM customers scope_customer WHERE scope_customer.id = p.customer_id AND scope_customer.company_id = %(company_id)s))
               AND p.status = %(status_concluido)s
               AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
         ),
@@ -274,7 +277,8 @@ def sugerir_ofertas_personalizadas(
         FROM promotions promo
         LEFT JOIN products pr ON pr.id = promo.product_id
         LEFT JOIN categories cat ON cat.id = pr.category_id
-        WHERE now() BETWEEN promo.promotion_start_date AND promo.promotion_end_date
+        WHERE (%(company_id)s::bigint IS NULL OR pr.company_id = %(company_id)s)
+          AND now() BETWEEN promo.promotion_start_date AND promo.promotion_end_date
           AND (
                 promo.product_id IN (SELECT product_id FROM produtos_cliente)
                 OR pr.category_id IN (SELECT category_id FROM categorias_cliente)

@@ -6,7 +6,7 @@ from config import settings
 from langchain.tools import tool
 
 from data.postgres import executar_consulta
-from data.access import require_domain
+from data.access import require_domain, company_scope
 from tools.query_policy import validar_limite, validar_periodo
 
 
@@ -18,7 +18,7 @@ STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
 def _executar_consulta(sql: str, params: dict) -> list:
     require_domain("vendas")
-    return executar_consulta(sql, params)
+    return executar_consulta(sql, {**params, "company_id": company_scope()})
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
@@ -64,6 +64,8 @@ def _serie_semanal_vendas(
             JOIN products pr ON pr.id = pp.product_id
             LEFT JOIN categories c ON c.id = pr.category_id
             WHERE p.status = %(status_concluido)s
+              AND (%(company_id)s::bigint IS NULL OR pr.company_id = %(company_id)s)
+              AND (%(company_id)s::bigint IS NULL OR EXISTS (SELECT 1 FROM customers scope_customer WHERE scope_customer.id = p.customer_id AND scope_customer.company_id = %(company_id)s))
               AND p.date >= DATE_TRUNC('week', now() - (%(semanas)s * INTERVAL '1 week'))
               AND p.date < DATE_TRUNC('week', now())
               AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
@@ -238,6 +240,8 @@ def consultar_historico_vendas(
         JOIN products pr ON pr.id = pp.product_id
         LEFT JOIN categories c ON c.id = pr.category_id
         WHERE p.status = %(status_concluido)s
+              AND (%(company_id)s::bigint IS NULL OR pr.company_id = %(company_id)s)
+              AND (%(company_id)s::bigint IS NULL OR EXISTS (SELECT 1 FROM customers scope_customer WHERE scope_customer.id = p.customer_id AND scope_customer.company_id = %(company_id)s))
           AND p.date >= now() - (%(dias)s * INTERVAL '1 day')
           AND (%(produto)s IS NULL OR pr.name ILIKE %(produto)s)
           AND (%(categoria)s IS NULL OR c.category ILIKE %(categoria)s)
