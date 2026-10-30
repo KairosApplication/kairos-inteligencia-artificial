@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from config import settings
 from data.request_context import chat_context
+from data.answer_sources import public_sources
 
 
 class PersistenceError(RuntimeError):
@@ -120,9 +121,10 @@ class AiApiClient:
     def conversation(self, user_id, id):
         return decode(self.request("GET", f"runtime/users/{user_id}/conversations/{id}"))
 
-    def append_turn(self, user_id, id, question, answer, turn_id):
+    def append_turn(self, user_id, id, question, answer, turn_id, *, sources=None):
         return self.request("POST", f"runtime/users/{user_id}/conversations/{id}/turns",
-                            payload={"turnId": turn_id, "question": question, "answer": answer})
+                            payload={"turnId": turn_id, "question": question, "answer": answer,
+                                     **({"sources": public_sources(sources)} if sources is not None else {})})
 
     def summarize(self, user_id, id, summary, old, new, previous):
         try:

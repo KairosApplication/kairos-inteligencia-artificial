@@ -101,3 +101,4 @@ class GraphState(TypedDict):
     # todos os demais nós para registrar seus próprios traces)
     execution_id: object
     evidencias: list[dict]
+    sources: list[str]

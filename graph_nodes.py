@@ -8,6 +8,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 from agents import agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
 from config import USUARIO_PADRAO_ID, _agora_dt, settings
 from data.access import require_domain
+from data.answer_sources import capture_sources, public_sources
 from data.memory_store import (
     carregar_mensagens_contexto,
     obter_ou_criar_conversa_ativa,
@@ -95,6 +96,7 @@ def memoria_node(state: GraphState):
             "memorias_usuario": memorias_usuario,
             "execution_id": execution_id,
             "evidencias": [],
+            "sources": [],
             "tentativas": 0,
             "motivo_avaliacao": ""
         }
@@ -261,11 +263,14 @@ def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
         ))
     langsmith_run_id = gerar_run_id()
 
-    resultado = agente.invoke(
-        {"messages": mensagens_entrada},
-        context=state["memory_context"],
-        config={"run_id": langsmith_run_id}
-    )
+    with capture_sources() as sources:
+        resultado = agente.invoke(
+            {"messages": mensagens_entrada},
+            context=state["memory_context"],
+            config={"run_id": langsmith_run_id}
+        )
+    if historico or memorias:
+        sources.add("memory")
 
     mensagens_saida = resultado["messages"]
     resposta = mensagens_saida[-1].text
@@ -293,7 +298,8 @@ def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
     return {
         "resposta": resposta,
         "tentativas": tentativas,
-        "evidencias": evidencias
+        "evidencias": evidencias,
+        "sources": public_sources(sources),
     }
 
 
@@ -374,7 +380,11 @@ Avalie se a resposta produzida pode ser entregue ao usuário.
         resposta = "Não consegui confirmar uma resposta confiável para essa consulta. Tente novamente ou reformule a pergunta."
 
     if resultado.aprovado:
-        registrar_turno(state["conversation_id"], pergunta, resposta)
+        sources = public_sources(state.get("sources"))
+        if sources:
+            registrar_turno(state["conversation_id"], pergunta, resposta, sources=sources)
+        else:
+            registrar_turno(state["conversation_id"], pergunta, resposta)
         _extrair_e_registrar_memorias(state["user_id"], pergunta, resposta, execution_id)
 
     if resultado.aprovado or tentativas_esgotadas:
@@ -384,7 +394,8 @@ Avalie se a resposta produzida pode ser entregue ao usuário.
     return {
         "aprovado": resultado.aprovado,
         "motivo_avaliacao": resultado.motivo,
-        "resposta": resposta
+        "resposta": resposta,
+        "sources": public_sources(state.get("sources")) if resultado.aprovado else [],
     }
 
 

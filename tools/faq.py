@@ -12,6 +12,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
+from data.answer_sources import consulted
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 
@@ -68,6 +69,8 @@ def faq_retriever(question: str) -> str:
         question, k=settings.faq_k, fetch_k=settings.faq_fetch_k,
         lambda_mult=settings.faq_lambda_mult,
     )
+    if results:
+        consulted("pdf")
     return "\n\n".join(
         f"[Fonte: FAQ Kairos, página {result.metadata.get('page', 0) + 1}]\n{result.page_content}"
         for result in results

@@ -17,6 +17,7 @@ from data.ai_api import PersistenceError, get_ai_api, via_api
 from data.request_context import ChatContext, chat_context
 from data.access import Principal
 from data.auth import authenticated_user
+from data.answer_sources import AnswerSource, public_sources
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Kairos Chatbot", docs_url=None, redoc_url=None, openapi_url=None)
@@ -80,6 +81,7 @@ class ChatResponse(BaseModel):
     executionId: str
     blocked: bool
     approved: bool
+    sources: list[AnswerSource] = Field(default_factory=list)
 
 
 def execute_graph(state):
@@ -177,7 +179,9 @@ def process_message(request: ChatRequest, identity: Principal | None = None):
                 chat_context.reset(context_token)
         return ChatResponse(answer=result["resposta"], conversationId=str(conversation_id),
                             executionId=str(result["execution_id"]), blocked=result.get("bloqueado", False),
-                            approved=result.get("aprovado", False))
+                            approved=result.get("aprovado", False),
+                            sources=(public_sources(result.get("sources"))
+                                     if result.get("aprovado", False) and not result.get("bloqueado", False) else []))
     except HTTPException:
         raise
     except PermissionError:
@@ -248,7 +252,8 @@ def my_conversation(conversation_id: str, identity: Principal = Depends(authenti
     document = authorized_conversation(identity, conversation_id)
     # Não expõe detalhes internos de leases, execução ou autorização.
     return {"id": str(document["_id"]), "status": document["status"], "summary": document.get("summary"),
-            "messages": [{"sender": item["sender"], "content": item["content"], "timestamp": item.get("timestamp")}
+            "messages": [{"sender": item["sender"], "content": item["content"], "timestamp": item.get("timestamp"),
+                          "sources": public_sources(item.get("sources")) if item["sender"] == "AI" else []}
                          for item in document.get("messages", [])]}
 
 
