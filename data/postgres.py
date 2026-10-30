@@ -5,6 +5,7 @@ import threading
 from psycopg2 import pool
 
 from config import settings
+from data.answer_sources import consulted
 
 connection_pool = None
 _pool_lock = threading.Lock()
@@ -49,7 +50,9 @@ def executar_consulta(sql: str, params: dict) -> list:
         with conn:
             with conn.cursor() as cur:
                 cur.execute(sql, params)
-                return cur.fetchall()
+                result = cur.fetchall()
+                consulted("database")
+                return result
     finally:
         release_connection(conn)
 

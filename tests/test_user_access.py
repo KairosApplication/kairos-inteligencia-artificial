@@ -17,9 +17,9 @@ from data.request_context import ChatContext, chat_context
 from tools import clientes, estoque, vendas
 
 ID = "000000000000000000000001"
-MANAGER = Principal(7, "MANAGER")
-STOCKER = Principal(7, "STOCKER", sector_ids=(2, 3))
-CUSTOMER = Principal(7, "CUSTOMER", customer_id=11)
+MANAGER = Principal(7, "MANAGER", company_id=1)
+STOCKER = Principal(7, "STOCKER", sector_ids=(2, 3), company_id=1)
+CUSTOMER = Principal(7, "CUSTOMER", customer_id=11, company_id=1)
 
 
 @contextmanager
@@ -181,7 +181,7 @@ def test_memory_scope_changes_with_role_or_sector_and_excludes_legacy(monkeypatc
 
 @pytest.mark.parametrize("position,customer,role", [("MANAGER", None, "MANAGER"), ("STOCKER", None, "STOCKER"), (None, 11, "CUSTOMER")])
 def test_profiles_resolve_from_real_database_links(monkeypatch, position, customer, role):
-    query = Mock(side_effect=[[(7, customer, 8, position)], [(2,), (3,)]])
+    query = Mock(side_effect=[[(7, customer, 8, position, 1, 1)], [(2,), (3,)]])
     monkeypatch.setattr(auth, "executar_consulta", query)
     result = auth.resolve_identity("pessoa@kairos.com")
     assert result.role == role
@@ -191,7 +191,7 @@ def test_profiles_resolve_from_real_database_links(monkeypatch, position, custom
 
 
 def test_cashier_is_not_implicitly_a_stocker(monkeypatch):
-    monkeypatch.setattr(auth, "executar_consulta", lambda *_: [(7, None, 8, "CASHIER")])
+    monkeypatch.setattr(auth, "executar_consulta", lambda *_: [(7, None, 8, "CASHIER", 1, None)])
     with pytest.raises(HTTPException) as error:
         auth.resolve_identity("caixa@kairos.com")
     assert error.value.status_code == 403
@@ -280,3 +280,54 @@ def test_public_auth_does_not_accept_internal_token_as_user_identity(client, mon
     assert result.status_code == 401
     resolver.assert_not_called()
     persistence.request.assert_not_called()
+
+
+def test_current_spring_cookies_and_renewal_reach_browser(client, monkeypatch):
+    browser, _ = client
+    api.app.dependency_overrides.clear()
+    monkeypatch.setattr(settings, "spring_auth_url", "http://127.0.0.1:8080")
+    monkeypatch.setattr(auth, "resolve_identity", lambda _: CUSTOMER)
+    client_type = httpx.Client
+
+    def spring(request):
+        assert "KAIROS_ACCESS=access" in request.headers["cookie"]
+        assert "KAIROS_REFRESH=refresh" in request.headers["cookie"]
+        assert "KAIROS_CSRF=csrf-cookie" in request.headers["cookie"]
+        assert "unrelated" not in request.headers["cookie"]
+        return httpx.Response(200, json={"email": "cliente@kairos.test"}, headers=[
+            ("Set-Cookie", "KAIROS_ACCESS=renewed; Path=/api/v1; HttpOnly; SameSite=Lax"),
+            ("Set-Cookie", "unrelated=ignored; Path=/"),
+        ])
+
+    monkeypatch.setattr(auth.httpx, "Client", lambda **kwargs: client_type(**kwargs, transport=httpx.MockTransport(spring)))
+    result = browser.get("/api/v1/me/chat", headers={"X-CSRF-TOKEN": "csrf", "Cookie":
+                         "KAIROS_ACCESS=access; KAIROS_REFRESH=refresh; KAIROS_CSRF=csrf-cookie; unrelated=secret"})
+    assert result.status_code == 200
+    assert result.headers.get_list("set-cookie") == ["KAIROS_ACCESS=renewed; Path=/api/v1; HttpOnly; SameSite=Lax"]
+    assert result.headers["cache-control"] == "no-store"
+
+
+def test_company_changes_invalidate_previous_history_scope():
+    assert CUSTOMER.scope != Principal(7, "CUSTOMER", customer_id=11, company_id=2).scope
+
+
+def test_manager_queries_restrict_company(monkeypatch):
+    query = Mock(return_value=[])
+    for module, tool, args, fragment in [
+        (estoque, estoque.consultar_niveis_estoque, {}, "sec.company_id = %(company_id)s"),
+        (vendas, vendas.consultar_historico_vendas, {"dias": 7}, "pr.company_id = %(company_id)s"),
+        (clientes, clientes.localizar_cliente, {"email": "alguem"}, "c.company_id = %(company_id)s"),
+    ]:
+        monkeypatch.setattr(module, "executar_consulta", query)
+        with identity_context(MANAGER):
+            tool.invoke(args)
+        sql, params = query.call_args.args
+        assert fragment in sql
+        assert params["company_id"] == 1
+
+
+def test_employee_without_company_is_denied(monkeypatch):
+    monkeypatch.setattr(auth, "executar_consulta", lambda *_: [(7, None, 8, "MANAGER", None, None)])
+    with pytest.raises(HTTPException) as error:
+        auth.resolve_identity("sem-empresa@kairos.test")
+    assert error.value.status_code == 403

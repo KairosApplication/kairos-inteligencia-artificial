@@ -22,6 +22,7 @@ from data.mongodb import get_database
 from data.ai_api import get_ai_api, via_api, PersistenceError
 from data.request_context import chat_context
 from data.access import principal
+from data.answer_sources import public_sources
 
 NOME_COLECAO = "conversations"
 
@@ -141,7 +142,7 @@ def contar_mensagens_brutas_carregadas(conversa: dict) -> int:
     return max(0, total_disponivel)
 
 
-def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> None:
+def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str, *, sources=None) -> None:
     """
     Adiciona a pergunta do usuário e a resposta final do agente ao
     histórico bruto da conversa, e atualiza o horário da última
@@ -153,7 +154,8 @@ def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> 
         if conversa is None:
             raise RuntimeError("Conversa não encontrada.")
         get_ai_api().append_turn(conversa["user_id"], conversation_id, pergunta, resposta,
-                                 context.request_id if context is not None else str(ObjectId()))
+                                 context.request_id if context is not None else str(ObjectId()),
+                                 **({"sources": public_sources(sources)} if sources is not None else {}))
         return
     colecao = get_database()[NOME_COLECAO]
 
@@ -168,6 +170,7 @@ def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str) -> 
             "message_id": str(ObjectId()),
             "sender": "AI",
             "content": resposta,
+            "sources": public_sources(sources),
             "timestamp": _agora()
         }
     ]

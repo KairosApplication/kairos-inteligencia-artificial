@@ -17,12 +17,23 @@ from data.ai_api import PersistenceError, get_ai_api, via_api
 from data.request_context import ChatContext, chat_context
 from data.access import Principal
 from data.auth import authenticated_user
+from data.answer_sources import AnswerSource, public_sources
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Kairos Chatbot", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=settings.chat_allowed_origins, allow_credentials=True,
                    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type", "X-CSRF-TOKEN"])
 bearer = HTTPBearer(auto_error=False)
+
+
+@app.middleware("http")
+async def preserve_auth_cookies(request, call_next):
+    response = await call_next(request)
+    for cookie in getattr(request.state, "auth_set_cookies", []):
+        response.headers.append("set-cookie", cookie)
+    if request.url.path.startswith("/api/v1/me/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def service_access(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
@@ -70,6 +81,7 @@ class ChatResponse(BaseModel):
     executionId: str
     blocked: bool
     approved: bool
+    sources: list[AnswerSource] = Field(default_factory=list)
 
 
 def execute_graph(state):
@@ -167,7 +179,9 @@ def process_message(request: ChatRequest, identity: Principal | None = None):
                 chat_context.reset(context_token)
         return ChatResponse(answer=result["resposta"], conversationId=str(conversation_id),
                             executionId=str(result["execution_id"]), blocked=result.get("bloqueado", False),
-                            approved=result.get("aprovado", False))
+                            approved=result.get("aprovado", False),
+                            sources=(public_sources(result.get("sources"))
+                                     if result.get("aprovado", False) and not result.get("bloqueado", False) else []))
     except HTTPException:
         raise
     except PermissionError:
@@ -210,7 +224,7 @@ def active_user_conversation(identity):
 
 @app.get("/api/v1/me/chat", dependencies=[Depends(user_persistence)])
 def my_access(identity: Principal = Depends(authenticated_user)):
-    return {"userId": identity.user_id, "role": identity.role, "customerId": identity.customer_id,
+    return {"userId": identity.user_id, "role": identity.role, "companyId": identity.company_id, "customerId": identity.customer_id,
             "sectorIds": identity.sector_ids,
             "domains": [name for name in ("faq", "estoque", "vendas", "clientes") if identity.allows(name)]}
 
@@ -238,7 +252,8 @@ def my_conversation(conversation_id: str, identity: Principal = Depends(authenti
     document = authorized_conversation(identity, conversation_id)
     # Não expõe detalhes internos de leases, execução ou autorização.
     return {"id": str(document["_id"]), "status": document["status"], "summary": document.get("summary"),
-            "messages": [{"sender": item["sender"], "content": item["content"], "timestamp": item.get("timestamp")}
+            "messages": [{"sender": item["sender"], "content": item["content"], "timestamp": item.get("timestamp"),
+                          "sources": public_sources(item.get("sources")) if item["sender"] == "AI" else []}
                          for item in document.get("messages", [])]}
 
 

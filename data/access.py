@@ -11,10 +11,11 @@ class Principal:
     role: str
     customer_id: int | None = None
     sector_ids: tuple[int, ...] = ()
+    company_id: int | None = None
 
     @property
     def scope(self):
-        value = f"v1:{self.user_id}:{self.role}:{self.customer_id}:{sorted(set(self.sector_ids))}"
+        value = f"v2:{self.user_id}:{self.role}:{self.company_id}:{self.customer_id}:{sorted(set(self.sector_ids))}"
         return sha256(value.encode()).hexdigest()
 
     def allows(self, domain):
@@ -52,3 +53,10 @@ def stock_sectors():
             raise PermissionError("Nenhum setor de reposição foi atribuído ao seu usuário.")
         return list(identity.sector_ids)
     return None
+
+
+def company_scope():
+    identity = principal()
+    if identity is not None and identity.company_id is None:
+        raise PermissionError("Conta sem empresa vinculada.")
+    return identity.company_id if identity else None
