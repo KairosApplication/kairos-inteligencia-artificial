@@ -200,12 +200,17 @@ def test_langsmith_uses_trace_totals_excludes_standalone_runs_and_projects_field
     assert all(call["selects"] == SELECTS for call in calls)
     assert not set(SELECTS) & {"INPUTS", "OUTPUTS", "ERROR", "EXTRA", "METADATA"}
     assert all("min_start_time" in call and "max_start_time" in call for call in calls)
+    root.status = "error"
+    failed, _, _ = asyncio.run(read_langsmith(Client(), "PRIVATE PROJECT", "2026-11-02", "2026-11-02", 100))
+    assert failed[0]["known_cost_usd"] == .04
+    assert failed[0]["estimated_cost_usd"] is None and not failed[0]["cost_complete"]
 
 
 def test_failed_model_without_usage_does_not_prove_zero_cost():
     from types import SimpleNamespace as NS
     from reports.observability.langsmith_source import latency_ms, usage_confirmed
     assert not usage_confirmed(NS(total_cost=0, total_tokens=None, status="error"))
+    assert not usage_confirmed(NS(total_cost=0, total_tokens=0, status="error"))
     assert usage_confirmed(NS(total_cost=.01, total_tokens=20, status="error"))
     assert usage_confirmed(NS(total_cost=0, total_tokens=0, status="SUCCESS"))
     assert latency_ms(NS(latency_seconds=1.25)) == 1250

@@ -26,6 +26,9 @@ async def bounded(iterator, maximum):
 
 def usage_confirmed(run):
     cost = number(run.total_cost)
+    # O SDK pode preencher tokens=0/custo=0 em falhas sem uma medição de uso.
+    if normalized(run.status) == "ERROR":
+        return cost is not None and cost > 0
     return (cost is not None and normalized(run.status) != "PENDING"
             and (cost > 0 or number(run.total_tokens) is not None
                  or normalized(run.status) == "SUCCESS"))
@@ -88,7 +91,9 @@ async def read_langsmith(client, project_name, start, end, maximum, graph_name="
         aggregate = snapshot.trace_aggregates
         # v2: o custo do run é próprio; o total da trace vem de trace_aggregates.
         total = number(aggregate.total_cost) if aggregate else None
-        complete = bool(models) and all(usage_confirmed(run) for run in models) and total is not None
+        # Uma falha em ferramenta pode ocultar uso de embeddings/provedores não rastreados.
+        complete = (normalized(root.status) == "SUCCESS" and bool(models)
+                    and all(usage_confirmed(run) for run in models) and total is not None)
         known = total if total is not None and (total > 0 or complete) else None
         begin, finish = instant(root.start_time), instant(root.end_time)
         state = normalized(root.status)
