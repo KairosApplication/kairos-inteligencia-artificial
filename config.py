@@ -18,9 +18,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=2048, gt=0)
     faq_pdf_path: Path = ROOT_DIR / "data" / "FAQ_Kairos.pdf"
     faq_cache_path: Path = ROOT_DIR / ".cache" / "faq-embeddings.sqlite3"
-    faq_model_cache_path: Path = ROOT_DIR / ".cache" / "faq-models"
-    faq_embedding_threads: int = Field(default=2, ge=1)
-    faq_embedding_batch_size: int = Field(default=16, ge=1)
+    faq_embedding_batch_size: int = Field(default=64, ge=1, le=256)
     faq_chunk_size: int = Field(default=600, gt=0)
     faq_chunk_overlap: int = Field(default=50, ge=0)
     faq_k: int = Field(default=4, gt=0)
