@@ -19,9 +19,10 @@ from data.access import Principal
 from data.auth import authenticated_user
 from data.answer_sources import AnswerSource, public_sources
 from data.analyst_a2a import install_analyst_routes
+from data.analyst_mcp import analyst_lifespan
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Kairos Chatbot", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Kairos Chatbot", lifespan=analyst_lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=settings.chat_allowed_origins, allow_credentials=True,
                    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type", "X-CSRF-TOKEN"])
 bearer = HTTPBearer(auto_error=False)
