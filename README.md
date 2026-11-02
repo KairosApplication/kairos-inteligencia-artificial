@@ -21,26 +21,26 @@ LangSmith é opcional. Nunca versione o .env.
 
 ## Provedores e configuração
 
-Todos os agentes usam OpenAI como provedor principal. Os padrões são
-gpt-4.1-mini para chat e text-embedding-3-small para embeddings. Altere
-OPENAI_CHAT_MODEL e OPENAI_FAST_MODEL para modelos compatíveis com ferramentas,
-saída JSON Schema e temperatura. Os padrões foram escolhidos para uma primeira
-integração econômica; avalie qualidade e acesso na sua conta antes da entrega.
+Os agentes de chat usam OpenAI como provedor principal, com gpt-6-luna
+instanciado em llms.py. O FAQ gera embeddings multilíngues localmente com
+sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 via FastEmbed.
 
 Quando uma chamada de chat OpenAI retorna RateLimitError (HTTP 429), somente
 aquele passo passa para Groq. O SDK de chat não repete a chamada antes do fallback.
 Erros de autenticação, entrada e rede continuam sendo erros, sem mascaramento.
 Se Groq também falhar, o erro é propagado. Uma nova chamada tenta OpenAI novamente.
 
-O FAQ usa somente embeddings OpenAI: vetores de provedores diferentes não são
-intercambiáveis. Um cache SQLite ignorado pelo Git reutiliza vetores por texto
-e modelo entre reinicializações. A primeira consulta ao FAQ pode chamar a API;
-consultas novas também precisam de embeddings e podem atingir limites.
-O índice FAISS é montado na primeira consulta de cada processo.
+O FAQ mantém o índice FAISS e não exige uma API de embeddings ou Qdrant hospedado.
+A primeira execução baixa os pesos do modelo público (aproximadamente 220 MB)
+para .cache/faq-models; depois os embeddings são calculados em CPU.
+Um cache SQLite ignorado pelo Git separa vetores por modelo e por tipo de texto
+(consulta ou documento). O índice FAISS é montado na primeira consulta de cada
+processo. Para uma implantação sem acesso à internet, prepare o cache do modelo
+antes de iniciar o serviço.
 
-Os parâmetros de chunking e MMR estão em .env.example. O notebook antigo usa E5:
-seu resultado de 29/30 perguntas não valida os novos embeddings. Reavalie a
-recuperação e as respostas com OpenAI antes de anunciar métricas.
+Os parâmetros de chunking, MMR e execução do modelo local estão em config.py.
+O notebook antigo usa E5: seu resultado de 29/30 perguntas não valida o modelo
+atual. Reavalie a recuperação antes de anunciar métricas.
 
 ## Executar e validar
 

@@ -1,20 +1,21 @@
-"""FAQ com embeddings OpenAI e cache local sem desserialização de pickle."""
+"""FAQ com embeddings multilíngues locais e cache sem desserialização de pickle."""
 import hashlib
 import json
+import os
 import sqlite3
 from functools import lru_cache
 
 from langchain.tools import tool
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from data.answer_sources import consulted
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 class CachedEmbeddings(Embeddings):
@@ -27,8 +28,8 @@ class CachedEmbeddings(Embeddings):
         with sqlite3.connect(path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, vector TEXT NOT NULL)")
 
-    def _key(self, text):
-        return hashlib.sha256(json.dumps([self.namespace, text]).encode()).hexdigest()
+    def _key(self, text, kind="document"):
+        return hashlib.sha256(json.dumps([self.namespace, kind, text]).encode()).hexdigest()
 
     def embed_documents(self, texts):
         with sqlite3.connect(self.path) as db:
@@ -45,7 +46,15 @@ class CachedEmbeddings(Embeddings):
             return [json.loads(row[0]) for row in cached]
 
     def embed_query(self, text):
-        return self.embed_documents([text])[0]
+        # Modelos locais podem codificar consultas e documentos de formas diferentes.
+        key = self._key(text, "query")
+        with sqlite3.connect(self.path) as db:
+            row = db.execute("SELECT vector FROM embeddings WHERE key = ?", (key,)).fetchone()
+            if row is not None:
+                return json.loads(row[0])
+            vector = self.delegate.embed_query(text)
+            db.execute("INSERT OR REPLACE INTO embeddings VALUES (?, ?)", (key, json.dumps(vector)))
+            return vector
 
 
 @lru_cache(maxsize=1)
@@ -54,10 +63,19 @@ def create_faq_database():
     chunks = RecursiveCharacterTextSplitter(
         chunk_size=settings.faq_chunk_size, chunk_overlap=settings.faq_chunk_overlap,
     ).split_documents(docs)
+    model_cache_path = str(settings.faq_model_cache_path.resolve())
+    if os.name == "nt" and not model_cache_path.startswith("\\\\?\\"):
+        # O cache HF acrescenta nome do repositório + hash; o caminho do OneDrive pode exceder 260 caracteres.
+        model_cache_path = ("\\\\?\\UNC\\" + model_cache_path[2:] if model_cache_path.startswith("\\\\")
+                            else "\\\\?\\" + model_cache_path)
     embeddings = CachedEmbeddings(
-        OpenAIEmbeddings(model=EMBEDDING_MODEL, max_retries=2,
-                         request_timeout=settings.llm_timeout_seconds),
-        settings.faq_cache_path, EMBEDDING_MODEL,
+        FastEmbedEmbeddings(
+            model_name=EMBEDDING_MODEL, doc_embed_type="passage",
+            cache_dir=model_cache_path,
+            providers=["CPUExecutionProvider"], threads=settings.faq_embedding_threads,
+            batch_size=settings.faq_embedding_batch_size,
+        ),
+        settings.faq_cache_path, f"fastembed:{EMBEDDING_MODEL}",
     )
     return FAISS.from_documents(chunks, embeddings)
 

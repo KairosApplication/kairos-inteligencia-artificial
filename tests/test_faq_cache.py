@@ -10,17 +10,30 @@ def test_cache_reutiliza_vetores_entre_instancias(tmp_path):
     first = CachedEmbeddings(delegate, path, "modelo-a")
     assert first.embed_documents(["a", "b"]) == [[1.0, 0.0], [0.0, 1.0]]
     second = CachedEmbeddings(delegate, path, "modelo-a")
-    assert second.embed_query("a") == [1.0, 0.0]
+    assert second.embed_documents(["a"]) == [[1.0, 0.0]]
     assert delegate.embed_documents.call_count == 1
 
 
 def test_modelo_novo_nao_reutiliza_vetor_antigo(tmp_path):
     delegate = Mock()
-    delegate.embed_documents.side_effect = [[[1.0]], [[2.0]]]
+    delegate.embed_query.side_effect = [[1.0], [2.0]]
     path = tmp_path / "cache.sqlite3"
     assert CachedEmbeddings(delegate, path, "a").embed_query("texto") == [1.0]
     assert CachedEmbeddings(delegate, path, "b").embed_query("texto") == [2.0]
-    assert delegate.embed_documents.call_count == 2
+    assert delegate.embed_query.call_count == 2
+
+
+def test_cache_separa_consulta_de_documento_e_reutiliza_consulta(tmp_path):
+    delegate = Mock()
+    delegate.embed_documents.return_value = [[1.0, 0.0]]
+    delegate.embed_query.return_value = [0.0, 1.0]
+    path = tmp_path / "cache.sqlite3"
+    first = CachedEmbeddings(delegate, path, "local")
+    assert first.embed_documents(["texto"]) == [[1.0, 0.0]]
+    assert first.embed_query("texto") == [0.0, 1.0]
+    second = CachedEmbeddings(delegate, path, "local")
+    assert second.embed_query("texto") == [0.0, 1.0]
+    assert delegate.embed_query.call_count == 1
 
 
 def test_busca_faq_informa_fonte_e_pagina(monkeypatch):
