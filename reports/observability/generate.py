@@ -2,6 +2,7 @@
 
 Prévia: python -m reports.observability.generate --preview
 Uso real: python -m reports.observability.generate --from-api --start AAAA-MM-DD --end AAAA-MM-DD
+LangSmith: python -m reports.observability.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
 """
 import argparse
 import json
@@ -226,11 +227,14 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--preview", action="store_true", help="Prévia sem métricas nem chamadas externas.")
     mode.add_argument("--from-api", action="store_true", help="Lê a API Java configurada em AI_API_URL/AI_API_TOKEN.")
+    mode.add_argument("--from-langsmith", action="store_true", help="Lê métricas técnicas do projeto LANGSMITH_PROJECT.")
     mode.add_argument("--input", type=Path, help="Exportação privada JSON com listas executions e traces.")
     parser.add_argument("--start", help="Primeiro dia, AAAA-MM-DD, em São Paulo.")
     parser.add_argument("--end", help="Último dia inclusivo, AAAA-MM-DD, em São Paulo.")
     parser.add_argument("--confirmed-resolutions", type=int, help="Contagem declarada e verificada pelo responsável.")
     parser.add_argument("--max-records", type=int, default=10000, help="Teto por recurso; exceder aborta a geração.")
+    parser.add_argument("--graph-name", default="LangGraph", help="Nome da trace raiz do grafo no LangSmith.")
+    parser.add_argument("--publish", action="store_true", help="Autoriza salvar o snapshot agregado em reports/observability/.")
     parser.add_argument("--output", type=Path, help="Destino privado; padrão: .cache/reports/observability.html.")
     args = parser.parse_args(argv)
     try:
@@ -243,16 +247,21 @@ def main(argv=None):
         if args.start:
             period_bounds(args.start, args.end)
         output = (args.output or ROOT / ".cache/reports/observability.html").resolve()
-        # Snapshots reais ficam fora da árvore versionada; o modelo vazio é publicável.
+        # Publicação de métricas agregadas exige escolha explícita; o padrão continua privado.
         if not args.preview and output.is_relative_to(ROOT):
-            if not any(output.is_relative_to(ROOT / folder) for folder in (".cache", "tmp")):
+            publishing = args.publish and output.is_relative_to(TEMPLATE.parent)
+            if not publishing and not any(output.is_relative_to(ROOT / folder) for folder in (".cache", "tmp")):
                 raise ValueError("Salve métricas reais em .cache/, tmp/ ou fora do repositório.")
         executions, traces = [], []
+        telemetry = None
         if args.from_api:
             from data.ai_api import get_ai_api
             api = get_ai_api()
             executions = read_bounded(api, "ai-executions", args.max_records)
             traces = read_bounded(api, "agent-traces", args.max_records)
+        elif args.from_langsmith:
+            from .langsmith_source import load_langsmith
+            executions, traces, telemetry = load_langsmith(args.start, args.end, args.max_records, args.graph_name)
         elif args.input:
             if args.input.stat().st_size > 25 * 1024 * 1024:
                 raise ValueError("Exportação excede 25 MiB; use uma amostra menor.")
@@ -263,8 +272,13 @@ def main(argv=None):
             if len(executions) > args.max_records or len(traces) > args.max_records:
                 raise ValueError("Exportação excede --max-records.")
         report = build_report(executions, traces, start=args.start, end=args.end,
-                              source="preview" if args.preview else "api" if args.from_api else "file",
+                              source=("preview" if args.preview else "api" if args.from_api
+                                      else "langsmith" if args.from_langsmith else "file"),
                               confirmed_resolutions=args.confirmed_resolutions)
+        if telemetry is not None:
+            report["telemetry"] = telemetry
+            report["counts"]["blocked"] = None
+            report["counts"]["rejected"] = None
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(render_html(report), encoding="utf-8")
         print(f"Relatório gerado: {output}")
