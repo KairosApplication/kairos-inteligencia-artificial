@@ -5,6 +5,13 @@ LangChain cria os agentes; LangGraph conduz memória → guardrail → roteament
 especialista → juiz. O analista combina indicadores históricos do Databricks
 com os especialistas de estoque e vendas.
 
+## Arquitetura
+
+![Arquitetura de alto nível do chatbot Kairos](observability/architecture/kairos-arquitetura.png)
+
+[Abrir imagem](observability/architecture/kairos-arquitetura.png) ·
+[SVG editável](observability/architecture/kairos-arquitetura.svg)
+
 ## Estrutura
 
 ```text
@@ -14,6 +21,7 @@ app/                     API, agentes, grafo, autenticação e memória
   tools/                 Ferramentas dos especialistas
 data/                    PDF e demais arquivos consumidos pela aplicação
 observability/           Traces, métricas e integração LangSmith
+  architecture/          Diagrama de alto nível em PNG e SVG
   reports/               Gerador, HTML e recursos do relatório
   evaluations/           Notebook histórico de avaliação do RAG
 tests/                   Testes offline
@@ -81,8 +89,10 @@ analista for implantado em um serviço externo.
 
 Os indicadores exigem a coluna configurada em `DATABRICKS_COMPANY_COLUMN`
 (padrão `company_id`). `DATABRICKS_COMPANY_ID` só serve para um conjunto inteiro
-comprovadamente exclusivo de uma empresa. O Gold atual ainda não preserva essa
-separação; o acesso permanece bloqueado quando não é possível garantir o filtro.
+comprovadamente exclusivo de uma empresa. As seis referências Gold possuem
+`company_id`; as consultas filtram a empresa recebida da identidade autenticada.
+Vendas por categoria também exige uma coluna de data reconhecida para permitir
+o filtro de período; sem essa coluna, a consulta permanece bloqueada.
 
 A tool de dashboard consulta apenas metadados e requer o escopo OAuth
 `dashboards` e vínculo exclusivo de empresa. Interpretação visual de gráficos e
