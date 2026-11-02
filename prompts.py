@@ -215,6 +215,12 @@ faq
 estoque
 vendas
 clientes
+analista
+
+Utilize a rota analista para insights estratégicos, análise de indicadores Gold,
+Databricks ou dashboards, ou para combinar histórico analítico com a situação
+operacional dos especialistas. Essa rota é exclusiva para gerentes; o servidor
+verifica o acesso. Não desvie consultas operacionais simples para esta rota.
 
 Utilize a rota faq quando a pergunta estiver relacionada a
 informações documentadas sobre o Kairos, incluindo:

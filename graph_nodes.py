@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agents import agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
+from agents import agente_analista, agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
 from config import USUARIO_PADRAO_ID, _agora_dt, settings
 from data.access import require_domain
 from data.answer_sources import capture_sources, public_sources
@@ -323,6 +323,10 @@ def clientes_node(state: GraphState):
     return _executar_especialista("clientes", agente_clientes, state)
 
 
+def analista_node(state: GraphState):
+    return _executar_especialista("analista", agente_analista, state)
+
+
 # NODE - JUIZ
 def juiz_node(state: GraphState):
     inicio = _agora_dt()
@@ -480,6 +484,9 @@ def decidir_bloqueio(state: GraphState):
 # CONDITIONAL EDGE - ORQUESTRADOR
 def decidir_rota(state: GraphState):
     rota = state["rota"]
+
+    if rota == "analista":
+        return "analista"
 
     if rota == "estoque":
         return "estoque"

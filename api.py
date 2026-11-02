@@ -18,12 +18,14 @@ from data.request_context import ChatContext, chat_context
 from data.access import Principal
 from data.auth import authenticated_user
 from data.answer_sources import AnswerSource, public_sources
+from data.analyst_a2a import install_analyst_routes
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="Kairos Chatbot", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=settings.chat_allowed_origins, allow_credentials=True,
                    allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type", "X-CSRF-TOKEN"])
 bearer = HTTPBearer(auto_error=False)
+install_analyst_routes(app)
 
 
 @app.middleware("http")
@@ -226,7 +228,7 @@ def active_user_conversation(identity):
 def my_access(identity: Principal = Depends(authenticated_user)):
     return {"userId": identity.user_id, "role": identity.role, "companyId": identity.company_id, "customerId": identity.customer_id,
             "sectorIds": identity.sector_ids,
-            "domains": [name for name in ("faq", "estoque", "vendas", "clientes") if identity.allows(name)]}
+            "domains": [name for name in ("faq", "estoque", "vendas", "clientes", "analista") if identity.allows(name)]}
 
 
 @app.post("/api/v1/me/chat/conversations", dependencies=[Depends(user_persistence)], status_code=201)
