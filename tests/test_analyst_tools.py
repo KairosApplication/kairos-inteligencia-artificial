@@ -11,12 +11,13 @@ from fastapi.testclient import TestClient
 from mcp import Client
 from pydantic import SecretStr
 
-import api
-from config import settings
-from data import analyst_a2a, analyst_mcp, analyst_runtime, auth
-from data.access import Principal
-from data.databricks import DatabricksReader, DatabricksSettings, DatabricksUnavailable
-from data.request_context import ChatContext, chat_context
+import app.api as api
+from app.config import settings
+from app.analyst import a2a as analyst_a2a, mcp as analyst_mcp, runtime as analyst_runtime
+from app import auth
+from app.access import Principal
+from app.integrations.databricks import DatabricksReader, DatabricksSettings, DatabricksUnavailable
+from app.request_context import ChatContext, chat_context
 
 
 def config(**overrides):

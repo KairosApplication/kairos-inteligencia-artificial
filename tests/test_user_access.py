@@ -9,12 +9,12 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-import api
-from config import settings
-from data import auth, api_observability, memory_store
-from data.access import Principal, require_domain
-from data.request_context import ChatContext, chat_context
-from tools import clientes, estoque, vendas
+import app.api as api
+from app.config import settings
+from app import auth, user_memory, memory_store
+from app.access import Principal, require_domain
+from app.request_context import ChatContext, chat_context
+from app.tools import clientes, estoque, vendas
 
 ID = "000000000000000000000001"
 MANAGER = Principal(7, "MANAGER", company_id=1)
@@ -172,10 +172,11 @@ def test_memory_scope_changes_with_role_or_sector_and_excludes_legacy(monkeypatc
         {"content": "gerencial", "access_scope": MANAGER.scope},
         {"content": "legado"}, {"content": "próprio", "access_scope": CUSTOMER.scope},
     ]}])
-    monkeypatch.setattr(api_observability, "get_ai_api", lambda: persistence)
+    monkeypatch.setattr(user_memory, "get_ai_api", lambda: persistence)
+    monkeypatch.setattr(user_memory, "via_api", lambda: True)
     with identity_context(CUSTOMER):
-        assert [m["content"] for m in api_observability.carregar_memorias(7)] == ["próprio"]
-        api_observability.registrar_memorias(7, [{"tipo": "fato", "conteudo": "próprio", "importancia": 1}])
+        assert [m["content"] for m in user_memory.carregar_memorias(7)] == ["próprio"]
+        user_memory.registrar_memorias(7, [{"tipo": "fato", "conteudo": "próprio", "importancia": 1}])
     assert persistence.append_memories.call_args.args[1][0]["access_scope"] == CUSTOMER.scope
     assert STOCKER.scope != Principal(7, "STOCKER", sector_ids=(4,)).scope
 
@@ -244,7 +245,7 @@ def test_mobile_checks_revocation_and_verified_email(monkeypatch):
 
 
 def test_specialist_does_not_invoke_forbidden_agent(monkeypatch):
-    import graph_nodes
+    import app.graph_nodes as graph_nodes
     finish = Mock()
     agent = Mock()
     monkeypatch.setattr(graph_nodes, "finalizar_execucao", finish)
