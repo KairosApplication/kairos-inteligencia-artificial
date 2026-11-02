@@ -1,5 +1,4 @@
 from langchain.agents import create_agent
-from data.analyst_a2a import AnalystA2AProxy
 
 from data.conversation_middleware import MemoryContext
 from llms import fallback_middleware, llm_principal, llm_rapido
@@ -9,8 +8,6 @@ from tools.clientes import CLIENTES_TOOLS
 from tools.estoque import ESTOQUE_TOOLS
 from tools.faq import FAQ_TOOLS
 from tools.vendas import VENDAS_TOOLS
-
-agente_analista = AnalystA2AProxy()
 
 # AGENTE ORQUESTRADOR
 # Não recebe tools: sua única função é classificar a intenção do

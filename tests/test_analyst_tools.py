@@ -154,10 +154,10 @@ def test_a2a_is_not_an_unauthenticated_model_endpoint(a2a):
 
 
 @pytest.mark.parametrize("identity", [None, Principal(42, "CUSTOMER", company_id=7), Principal(42, "STOCKER", company_id=7)])
-def test_graph_proxy_denies_missing_or_non_manager_identity(identity):
+def test_analyst_denies_missing_or_non_manager_identity(identity):
     token = chat_context.set(ChatContext(42, None, "test", identity))
     try:
         with pytest.raises(PermissionError):
-            analyst_a2a.AnalystA2AProxy().invoke({"messages": []})
+            analyst_a2a.invoke_analyst({"messages": []})
     finally:
         chat_context.reset(token)

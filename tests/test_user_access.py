@@ -248,7 +248,7 @@ def test_specialist_does_not_invoke_forbidden_agent(monkeypatch):
     agent = Mock()
     monkeypatch.setattr(graph_nodes, "finalizar_execucao", finish)
     with identity_context(CUSTOMER), pytest.raises(PermissionError):
-        graph_nodes._executar_especialista("vendas", agent, {"execution_id": ObjectId(ID)})
+        graph_nodes._executar_especialista("vendas", agent.invoke, {"execution_id": ObjectId(ID)})
     agent.invoke.assert_not_called()
     assert finish.call_args.args[1] == "REJECTED"
 

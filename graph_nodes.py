@@ -5,9 +5,10 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agents import agente_analista, agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
+from agents import agente_clientes, agente_estoque, agente_faq, agente_orquestrador, agente_vendas
 from config import USUARIO_PADRAO_ID, _agora_dt, settings
 from data.access import require_domain
+from data.analyst_a2a import invoke_analyst
 from data.answer_sources import capture_sources, public_sources
 from data.memory_store import (
     carregar_mensagens_contexto,
@@ -231,11 +232,10 @@ def orquestrador_node(state: GraphState):
     return {"rota": resultado.rota}
 
 
-def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
+def _executar_especialista(nome_agente: str, invocar, state: GraphState) -> dict:
     """
-    Lógica comum aos quatro nós especialistas (faq, estoque, vendas,
-    clientes): monta as mensagens de entrada (histórico + memórias de
-    longo prazo + pergunta atual), invoca o agente, registra o trace
+    Lógica comum aos nós especialistas: monta as mensagens de entrada
+    (histórico + memórias de longo prazo + pergunta atual), invoca o agente, registra o trace
     da execução em `agent_traces` e incrementa o contador de
     tentativas.
     """
@@ -264,7 +264,7 @@ def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
     langsmith_run_id = gerar_run_id()
 
     with capture_sources() as sources:
-        resultado = agente.invoke(
+        resultado = invocar(
             {"messages": mensagens_entrada},
             context=state["memory_context"],
             config={"run_id": langsmith_run_id}
@@ -305,26 +305,26 @@ def _executar_especialista(nome_agente: str, agente, state: GraphState) -> dict:
 
 # NODE FAQ
 def faq_node(state: GraphState):
-    return _executar_especialista("faq", agente_faq, state)
+    return _executar_especialista("faq", agente_faq.invoke, state)
 
 
 # NODE ESTOQUE
 def estoque_node(state: GraphState):
-    return _executar_especialista("estoque", agente_estoque, state)
+    return _executar_especialista("estoque", agente_estoque.invoke, state)
 
 
 # NODE VENDAS
 def vendas_node(state: GraphState):
-    return _executar_especialista("vendas", agente_vendas, state)
+    return _executar_especialista("vendas", agente_vendas.invoke, state)
 
 
 # NODE CLIENTES
 def clientes_node(state: GraphState):
-    return _executar_especialista("clientes", agente_clientes, state)
+    return _executar_especialista("clientes", agente_clientes.invoke, state)
 
 
 def analista_node(state: GraphState):
-    return _executar_especialista("analista", agente_analista, state)
+    return _executar_especialista("analista", invoke_analyst, state)
 
 
 # NODE - JUIZ

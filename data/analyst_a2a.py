@@ -6,18 +6,18 @@ from urllib.parse import urlparse
 import httpx
 import jwt
 from a2a import helpers
-from a2a.auth.user import User
 from a2a.client import ClientConfig, create_client
 from a2a.server.agent_execution import AgentExecutor
 from a2a.server.context import ServerCallContext
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
-from a2a.server.routes.common import ServerCallContextBuilder
+from a2a.server.routes.common import ServerCallContextBuilder, StarletteUser
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill, Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict
 from langchain_core.messages import AIMessage, ToolMessage
 from langsmith.run_helpers import get_current_run_tree, tracing_context
+from starlette.authentication import SimpleUser
 from starlette.responses import JSONResponse
 
 from config import settings
@@ -56,23 +56,10 @@ def agent_card(url):
                                         description="Combina indicadores autorizados com especialistas de estoque e vendas.")])
 
 
-class AnalystUser(User):
-    def __init__(self, identity):
-        self.identity = identity
-
-    @property
-    def is_authenticated(self):
-        return True
-
-    @property
-    def user_name(self):
-        return self.identity.scope
-
-
 class AnalystContext(ServerCallContextBuilder):
     def build(self, request):
         identity = request.state.analyst_identity
-        return ServerCallContext(user=AnalystUser(identity), state={
+        return ServerCallContext(user=StarletteUser(SimpleUser(identity.scope)), state={
             "principal": identity, "headers": {"a2a-version": request.headers.get("a2a-version", "")},
             "trace_parent": request.headers.get("langsmith-trace"),
         })
@@ -161,17 +148,16 @@ async def request_analysis(question, identity, http=None):
             await http.aclose()
 
 
-class AnalystA2AProxy:
-    def invoke(self, payload, **kwargs):
-        identity = principal()
-        if identity is None or identity.role != "MANAGER" or identity.company_id is None:
-            raise PermissionError("Análise estratégica exige identidade de gerente e empresa verificadas.")
-        question = "\n".join(message.text for message in payload["messages"])[-15000:]
-        result = asyncio.run(request_analysis(question, identity))
-        messages = list(payload["messages"])
-        for index, evidence in enumerate(result.get("evidence", [])):
-            messages.append(ToolMessage(content=evidence["conteudo"], name=evidence["ferramenta"],
-                                        tool_call_id=f"analyst-{index}", status=evidence["status"]))
-        for source in public_sources(result.get("sources")):
-            consulted(source)
-        return {"messages": [*messages, AIMessage(content=result["answer"])]}
+def invoke_analyst(payload, **kwargs):
+    identity = principal()
+    if identity is None or identity.role != "MANAGER" or identity.company_id is None:
+        raise PermissionError("Análise estratégica exige identidade de gerente e empresa verificadas.")
+    question = "\n".join(message.text for message in payload["messages"])[-15000:]
+    result = asyncio.run(request_analysis(question, identity))
+    messages = list(payload["messages"])
+    for index, evidence in enumerate(result.get("evidence", [])):
+        messages.append(ToolMessage(content=evidence["conteudo"], name=evidence["ferramenta"],
+                                    tool_call_id=f"analyst-{index}", status=evidence["status"]))
+    for source in public_sources(result.get("sources")):
+        consulted(source)
+    return {"messages": [*messages, AIMessage(content=result["answer"])]}
