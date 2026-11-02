@@ -3,6 +3,7 @@ from functools import wraps
 import logging
 
 from graph_nodes import (
+    analista_node,
     clientes_node,
     decidir_avaliacao,
     decidir_bloqueio,
@@ -85,6 +86,8 @@ builder.add_node(
     _node_observado(juiz_node)
 )
 
+builder.add_node("analista", _node_observado(analista_node))
+
 # EDGES
 builder.add_edge(
     START,
@@ -114,7 +117,8 @@ builder.add_conditional_edges(
         "faq": "faq",
         "estoque": "estoque",
         "vendas": "vendas",
-        "clientes": "clientes"
+        "clientes": "clientes",
+        "analista": "analista"
     }
 )
 
@@ -142,6 +146,8 @@ builder.add_edge(
     "juiz"
 )
 
+builder.add_edge("analista", "juiz")
+
 # JUIZ → FIM ou NOVA TENTATIVA
 builder.add_conditional_edges(
     "juiz",
@@ -151,7 +157,8 @@ builder.add_conditional_edges(
         "faq": "faq",
         "estoque": "estoque",
         "vendas": "vendas",
-        "clientes": "clientes"
+        "clientes": "clientes",
+        "analista": "analista"
     }
 )
 

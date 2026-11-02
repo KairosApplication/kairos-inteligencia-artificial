@@ -31,7 +31,7 @@ class Roteamento(BaseModel):
     Define a saída esperada do Orquestrador.
     """
 
-    rota: Literal["faq", "estoque", "vendas", "clientes"] = Field(description="Categoria do especialista que deve atender à solicitação.")
+    rota: Literal["faq", "estoque", "vendas", "clientes", "analista"] = Field(description="Categoria do especialista que deve atender à solicitação.")
 
     @field_validator("rota", mode="before")
     @classmethod

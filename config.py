@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     tendencia_max_semanas: int = Field(default=52, ge=3)
     previsao_max_semanas: int = Field(default=12, ge=1)
     memorias_contexto_limite: int = Field(default=5, ge=1)
+    analyst_a2a_url: str | None = None
+    analyst_a2a_token: SecretStr | None = None
+    analyst_timeout_seconds: float = Field(default=120, ge=10, le=300)
 
     @model_validator(mode="after")
     def validar_faixas(self):

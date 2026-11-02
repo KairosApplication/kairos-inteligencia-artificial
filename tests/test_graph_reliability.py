@@ -56,7 +56,7 @@ def test_nova_tentativa_recebe_feedback_e_evidencias_do_turno(state):
         "messages": [*payload["messages"],
                      ToolMessage(content="Quantidade: 12", name="consulta", tool_call_id="new"),
                      AIMessage(content="Há 12 unidades.")]}
-    result = nodes._executar_especialista("estoque", agent, state)
+    result = nodes._executar_especialista("estoque", agent.invoke, state)
     inputs = agent.invoke.call_args.args[0]["messages"]
     assert any("Corrigir quantidade" in m.content for m in inputs)
     assert result["tentativas"] == 2

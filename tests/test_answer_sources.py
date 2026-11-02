@@ -78,11 +78,11 @@ def test_model_cannot_invent_sources_and_retry_does_not_reuse_previous_sources(s
     def answer(payload, **kwargs):
         return {"messages": [*payload["messages"], AIMessage(content="Consultei o banco.")]}
     agent = Mock(invoke=Mock(side_effect=answer))
-    assert nodes._executar_especialista("estoque", agent, state)["sources"] == []
+    assert nodes._executar_especialista("estoque", agent.invoke, state)["sources"] == []
     state["sources"] = ["database"]
-    assert nodes._executar_especialista("estoque", agent, state)["sources"] == []
+    assert nodes._executar_especialista("estoque", agent.invoke, state)["sources"] == []
     state["historico"] = [HumanMessage(content="Pergunta anterior")]
-    assert nodes._executar_especialista("estoque", agent, state)["sources"] == ["memory"]
+    assert nodes._executar_especialista("estoque", agent.invoke, state)["sources"] == ["memory"]
 
 
 def test_approved_sources_are_persisted_and_rejected_sources_are_cleared(monkeypatch, state):

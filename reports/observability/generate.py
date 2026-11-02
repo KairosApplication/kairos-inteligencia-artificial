@@ -27,6 +27,7 @@ AGENTS = {
     "estoque": "Estoque",
     "vendas": "Vendas",
     "clientes": "Clientes",
+    "analista": "Analista",
     "juiz": "Juiz",
     "memoria_extracao": "Memória de longo prazo",
 }
