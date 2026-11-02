@@ -1,21 +1,22 @@
-"""FAQ com embeddings multilíngues locais e cache sem desserialização de pickle."""
+"""FAQ com embeddings OpenAI e cache persistente em SQLite."""
 import hashlib
 import json
-import os
 import sqlite3
 from functools import lru_cache
+from threading import Lock
 
 from langchain.tools import tool
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.embeddings import Embeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
 from data.answer_sources import consulted
 
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL = "text-embedding-3-small"
+_cache_lock = Lock()
 
 
 class CachedEmbeddings(Embeddings):
@@ -32,23 +33,24 @@ class CachedEmbeddings(Embeddings):
         return hashlib.sha256(json.dumps([self.namespace, kind, text]).encode()).hexdigest()
 
     def embed_documents(self, texts):
-        with sqlite3.connect(self.path) as db:
-            cached = [db.execute("SELECT vector FROM embeddings WHERE key = ?", (self._key(t),)).fetchone() for t in texts]
-            missing = [i for i, row in enumerate(cached) if row is None]
+        with _cache_lock, sqlite3.connect(self.path) as db:
+            cached = {text: db.execute("SELECT vector FROM embeddings WHERE key = ?", (self._key(text),)).fetchone()
+                      for text in dict.fromkeys(texts)}
+            missing = [text for text, row in cached.items() if row is None]
             if missing:
-                vectors = self.delegate.embed_documents([texts[i] for i in missing])
+                vectors = self.delegate.embed_documents(missing)
                 if len(vectors) != len(missing):
                     raise ValueError("Quantidade inesperada de embeddings retornados.")
-                for i, vector in zip(missing, vectors):
+                for text, vector in zip(missing, vectors):
                     serialized = json.dumps(vector)
-                    db.execute("INSERT OR REPLACE INTO embeddings VALUES (?, ?)", (self._key(texts[i]), serialized))
-                    cached[i] = (serialized,)
-            return [json.loads(row[0]) for row in cached]
+                    db.execute("INSERT OR REPLACE INTO embeddings VALUES (?, ?)", (self._key(text), serialized))
+                    cached[text] = (serialized,)
+            return [json.loads(cached[text][0]) for text in texts]
 
     def embed_query(self, text):
-        # Modelos locais podem codificar consultas e documentos de formas diferentes.
+        # Mantém os espaços de consulta e documento separados no cache.
         key = self._key(text, "query")
-        with sqlite3.connect(self.path) as db:
+        with _cache_lock, sqlite3.connect(self.path) as db:
             row = db.execute("SELECT vector FROM embeddings WHERE key = ?", (key,)).fetchone()
             if row is not None:
                 return json.loads(row[0])
@@ -63,19 +65,13 @@ def create_faq_database():
     chunks = RecursiveCharacterTextSplitter(
         chunk_size=settings.faq_chunk_size, chunk_overlap=settings.faq_chunk_overlap,
     ).split_documents(docs)
-    model_cache_path = str(settings.faq_model_cache_path.resolve())
-    if os.name == "nt" and not model_cache_path.startswith("\\\\?\\"):
-        # O cache HF acrescenta nome do repositório + hash; o caminho do OneDrive pode exceder 260 caracteres.
-        model_cache_path = ("\\\\?\\UNC\\" + model_cache_path[2:] if model_cache_path.startswith("\\\\")
-                            else "\\\\?\\" + model_cache_path)
     embeddings = CachedEmbeddings(
-        FastEmbedEmbeddings(
-            model_name=EMBEDDING_MODEL, doc_embed_type="passage",
-            cache_dir=model_cache_path,
-            providers=["CPUExecutionProvider"], threads=settings.faq_embedding_threads,
-            batch_size=settings.faq_embedding_batch_size,
+        OpenAIEmbeddings(
+            model=EMBEDDING_MODEL, dimensions=1536, max_retries=0,
+            request_timeout=settings.llm_timeout_seconds,
+            chunk_size=settings.faq_embedding_batch_size,
         ),
-        settings.faq_cache_path, f"fastembed:{EMBEDDING_MODEL}",
+        settings.faq_cache_path, f"openai:{EMBEDDING_MODEL}:1536",
     )
     return FAISS.from_documents(chunks, embeddings)
 

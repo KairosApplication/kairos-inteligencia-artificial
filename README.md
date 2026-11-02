@@ -81,13 +81,15 @@ Os modelos ficam explícitos em [llms.py](llms.py): `gpt-6-luna`, com temperatur
 afetado ao Groq (`openai/gpt-oss-120b` no chat e `openai/gpt-oss-20b` no rápido).
 Outros erros são propagados; a próxima chamada tenta OpenAI novamente.
 
-O FAQ usa `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` via
-FastEmbed, em CPU, e recuperação FAISS/MMR. A primeira consulta baixa cerca de
-220 MB para `.cache/faq-models`; prepare o cache antes de uma implantação sem
-internet. Os vetores ficam em cache SQLite separado por modelo e tipo de texto.
-Não depende de uma API de embeddings. Chunking, recuperação e limites estão em
-[config.py](config.py). O resultado 29/30 do notebook antigo foi obtido com E5 e
-não valida o modelo atual.
+O FAQ usa OpenAI `text-embedding-3-small` (1536 dimensões) e recuperação FAISS/MMR.
+O cache SQLite em `.cache/faq-embeddings.sqlite3` reutiliza vetores de documentos
+e perguntas entre reinícios, separados por modelo e tipo de texto. Somente textos
+ausentes são enviados à API, em lotes e sem retentativas automáticas. Preserve
+esse cache na implantação para evitar novas cobranças de indexação; ele não é
+versionado. O índice FAISS é reconstruído em memória a partir dos vetores salvos.
+
+Chunking, recuperação e tamanho dos lotes estão em [config.py](config.py).
+O resultado 29/30 do notebook antigo foi obtido com E5 e não valida o modelo atual.
 
 ## Executar e testar
 
