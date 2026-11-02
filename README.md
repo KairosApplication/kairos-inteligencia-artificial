@@ -26,17 +26,20 @@ tests/                   Testes offline
 
 ## Preparação
 
-Use Python 3.12. No PowerShell, dentro do projeto:
+Use Python 3.12 com `python` disponível no terminal. O ambiente virtual é
+opcional; os comandos usam o interpretador selecionado. No PowerShell, dentro
+do projeto:
 
 ```powershell
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
 Para implantação, instale `requirements.txt`. Preencha o `.env` local ou as
 variáveis do ambiente de execução; nunca envie credenciais ao GitHub.
 Preserve o `.env` existente e use [.env.example](.env.example) como referência.
+Os valores padrão das regras de negócio e limites das consultas ficam em
+[app/config.py](app/config.py).
 
 ## Configuração e integrações
 
@@ -115,7 +118,7 @@ O resultado 29/30 do notebook antigo foi obtido com E5 e não valida o modelo at
 ## Executar e testar
 
 ```powershell
-.venv/Scripts/python.exe -m uvicorn app.api:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
 
 `GET /health` verifica se a aplicação responde. Para o chat autenticado, use
@@ -126,9 +129,9 @@ O resultado 29/30 do notebook antigo foi obtido com E5 e não valida o modelo at
 As rotas `/api/v1/chat/...` são internas e exigem o token de serviço.
 
 ```powershell
-.venv/Scripts/python.exe -m pytest
-.venv/Scripts/python.exe .github/scripts/validate.py
-.venv/Scripts/python.exe -m app.cli
+python -m pytest
+python .github/scripts/validate.py
+python -m app.cli
 ```
 
 Os testes em `tests/` bloqueiam rede e não consomem modelos pagos. `app.cli` é um
@@ -141,7 +144,7 @@ O [relatório HTML](observability/reports/index.html) reúne latência, erros,
 custos, resolução e ROI projetado. Para gerar uma nova amostra do LangSmith:
 
 ```powershell
-.venv/Scripts/python.exe -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
+python -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
 ```
 
 O arquivo é salvo em `.cache/reports/observability.html`. Use `--preview` para
