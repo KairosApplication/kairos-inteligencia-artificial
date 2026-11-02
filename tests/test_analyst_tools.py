@@ -13,7 +13,7 @@ from pydantic import SecretStr
 
 import api
 from config import settings
-from data import analyst_a2a, analyst_mcp, analyst_runtime
+from data import analyst_a2a, analyst_mcp, analyst_runtime, auth
 from data.access import Principal
 from data.databricks import DatabricksReader, DatabricksSettings, DatabricksUnavailable
 from data.request_context import ChatContext, chat_context
@@ -92,11 +92,15 @@ def test_provider_403_has_no_raw_error_and_does_not_start_warehouse():
     assert not any(request.url.path == "/api/2.0/sql/statements" for request in calls)
 
 
-def test_mcp_protocol_tools_use_server_company_not_model_identity(monkeypatch):
+@pytest.fixture
+def analyst_key(monkeypatch):
+    monkeypatch.setattr(settings, "analyst_a2a_token", SecretStr("test-analyst-key-with-at-least-32-characters"))
+
+
+def test_mcp_protocol_tools_use_server_company_not_model_identity(monkeypatch, analyst_key):
     source = Mock()
     source.indicator.return_value = {"ok": True, "fonte": "database", "registros": []}
     monkeypatch.setattr(analyst_mcp, "get_databricks", lambda: source)
-    monkeypatch.setenv("KAIROS_ANALYST_COMPANY_ID", "7")
 
     async def run():
         async with Client(analyst_mcp.server) as client:
@@ -106,7 +110,8 @@ def test_mcp_protocol_tools_use_server_company_not_model_identity(monkeypatch):
                 assert tool.annotations.read_only_hint
                 assert "company_id" not in tool.input_schema.get("properties", {})
                 assert "sql" not in tool.input_schema.get("properties", {})
-            result = await client.call_tool("consultar_indicador", {"indicador": "rupturas", "limite": 3})
+            result = await client.call_tool("consultar_indicador", {"indicador": "rupturas", "limite": 3},
+                                           meta={"kairos_identity": auth.create_analyst_token(Principal(42, "MANAGER", company_id=7))})
             assert result.structured_content["ok"] is True
 
     asyncio.run(run())
@@ -114,9 +119,8 @@ def test_mcp_protocol_tools_use_server_company_not_model_identity(monkeypatch):
 
 
 @pytest.fixture
-def a2a(monkeypatch):
+def a2a(monkeypatch, analyst_key):
     monkeypatch.setattr(settings, "analyst_a2a_url", "http://127.0.0.1/a2a/analyst")
-    monkeypatch.setattr(settings, "analyst_a2a_token", SecretStr("test-analyst-key-with-at-least-32-characters"))
     runtime = AsyncMock(return_value={"answer": "Teste de contrato.", "evidence": [], "sources": []})
     monkeypatch.setattr(analyst_runtime, "run_analyst", runtime)
     return runtime
@@ -124,12 +128,85 @@ def a2a(monkeypatch):
 
 def test_real_a2a_sdk_round_trip_preserves_verified_identity(a2a):
     async def run():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://127.0.0.1") as http:
-            return await analyst_a2a.request_analysis("Compare o histórico com o estoque.", Principal(42, "MANAGER", company_id=7), http)
+        async with api.app.router.lifespan_context(api.app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://127.0.0.1") as http:
+                return await analyst_a2a.request_analysis("Compare o histórico com o estoque.", Principal(42, "MANAGER", company_id=7), http)
 
     assert asyncio.run(run())["answer"] == "Teste de contrato."
     identity = a2a.call_args.args[1]
     assert identity == Principal(42, "MANAGER", company_id=7)
+
+
+def test_application_starts_and_closes_mcp_without_subprocess(monkeypatch):
+    import subprocess
+    monkeypatch.setattr(subprocess, "Popen", Mock(side_effect=AssertionError("Subprocesso inesperado")))
+    with TestClient(api.app) as client:
+        assert client.get("/health").status_code == 200
+        assert isinstance(api.app.state.analyst_mcp, Client)
+        assert api.app.state.analyst_loop_token is not None
+    assert api.app.state.analyst_mcp is None
+    assert api.app.state.analyst_loop_token is None
+
+
+def test_integrated_a2a_starts_lifecycle_automatically_for_console(a2a, monkeypatch):
+    monkeypatch.setattr(settings, "analyst_a2a_url", None)
+    result = asyncio.run(analyst_a2a.request_analysis("Uma análise.", Principal(42, "MANAGER", company_id=7)))
+    assert result["answer"] == "Teste de contrato."
+    assert isinstance(a2a.call_args.args[2], Client)
+    assert api.app.state.analyst_mcp is None
+
+
+@pytest.mark.parametrize("metadata", [{}, {"kairos_identity": "forged-token"}, {"company_id": 7}])
+def test_mcp_rejects_missing_or_forged_identity_before_provider(monkeypatch, analyst_key, metadata):
+    source = Mock()
+    monkeypatch.setattr(analyst_mcp, "get_databricks", lambda: source)
+
+    async def run():
+        async with Client(analyst_mcp.server) as client:
+            result = await client.call_tool("consultar_indicador", {"indicador": "rupturas"}, meta=metadata)
+            assert result.structured_content["ok"] is False
+
+    asyncio.run(run())
+    source.indicator.assert_not_called()
+
+
+def test_shared_mcp_connection_keeps_concurrent_companies_isolated(monkeypatch, analyst_key):
+    source = Mock()
+    source.indicator.side_effect = lambda metric, company, *args: {"ok": True, "empresa_validada": company}
+    monkeypatch.setattr(analyst_mcp, "get_databricks", lambda: source)
+
+    async def run():
+        async with api.app.router.lifespan_context(api.app):
+            async def query(company):
+                identity = Principal(42, "MANAGER", company_id=company)
+                result = await api.app.state.analyst_mcp.call_tool("consultar_indicador", {"indicador": "rupturas"},
+                                                                 meta={"kairos_identity": auth.create_analyst_token(identity)})
+                return result.structured_content["empresa_validada"]
+            return await asyncio.gather(query(7), query(8), query(7), query(8))
+
+    assert asyncio.run(run()) == [7, 8, 7, 8]
+
+
+def test_sync_graph_reuses_application_loop_and_mcp(a2a, monkeypatch):
+    from langchain_core.messages import HumanMessage
+    monkeypatch.setattr(settings, "analyst_a2a_url", None)
+    identity = Principal(42, "MANAGER", company_id=7)
+
+    async def run():
+        import anyio
+        async with api.app.router.lifespan_context(api.app):
+            client = api.app.state.analyst_mcp
+            def invoke():
+                token = chat_context.set(ChatContext(42, None, "test", identity))
+                try:
+                    return analyst_a2a.invoke_analyst({"messages": [HumanMessage(content="Uma análise.")]})
+                finally:
+                    chat_context.reset(token)
+            result = await anyio.to_thread.run_sync(invoke)
+            assert a2a.call_args.args[2] is client
+            return result
+
+    assert asyncio.run(run())["messages"][-1].text == "Teste de contrato."
 
 
 @pytest.mark.parametrize("role,expired,expected", [("STOCKER", False, 403), ("CUSTOMER", False, 403), ("MANAGER", True, 401)])

@@ -1,13 +1,40 @@
 """Reutiliza a sessão Spring no desktop e ID tokens Firebase no mobile."""
 from functools import lru_cache
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
+import jwt
 from fastapi import HTTPException, Request
 
 from config import settings
 from data.access import Principal
 from data.postgres import executar_consulta
+
+
+def analyst_signing_key():
+    value = settings.analyst_a2a_token
+    if value is None or len(value.get_secret_value()) < 32:
+        raise RuntimeError("Configure ANALYST_A2A_TOKEN com pelo menos 32 caracteres no servidor.")
+    return value.get_secret_value()
+
+
+def create_analyst_token(identity):
+    if identity.role != "MANAGER" or identity.company_id is None:
+        raise PermissionError("Perfil sem acesso ao analista.")
+    now = datetime.now(timezone.utc)
+    return jwt.encode({"sub": str(identity.user_id), "role": identity.role, "company_id": identity.company_id,
+                       "iss": "kairos-chatbot", "aud": "kairos-analyst", "iat": now, "exp": now + timedelta(minutes=2)},
+                      analyst_signing_key(), algorithm="HS256")
+
+
+def verify_analyst_token(token):
+    claims = jwt.decode(token, analyst_signing_key(), algorithms=["HS256"], audience="kairos-analyst",
+                        issuer="kairos-chatbot", options={"require": ["sub", "exp", "iat", "role", "company_id"]})
+    user_id, company_id = int(claims["sub"]), claims["company_id"]
+    if claims["role"] != "MANAGER" or user_id <= 0 or type(company_id) is not int or company_id <= 0:
+        raise PermissionError("Perfil sem acesso ao analista.")
+    return Principal(user_id, "MANAGER", company_id=company_id)
 
 
 def spring_identity(request):

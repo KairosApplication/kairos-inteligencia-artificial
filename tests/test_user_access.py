@@ -45,7 +45,7 @@ def client(monkeypatch):
 
 def test_identity_cannot_be_selected_in_message(client):
     browser, persistence = client
-    result = browser.post("/api/v1/me/chat/messages", json={"question": "Oi", "userId": 99, "role": "MANAGER"})
+    result = browser.post("/api/v1/me/chat/messages", json={"question": "Oi", "userId": 99, "role": "MANAGER", "companyId": 99})
     assert result.status_code == 422
     persistence.conversation.assert_not_called()
 
@@ -54,6 +54,7 @@ def test_identity_cannot_be_selected_in_message(client):
     {"user_id": 99, "access_scope": CUSTOMER.scope},
     {"user_id": 7, "access_scope": MANAGER.scope, "summary": "gerencial"},
     {"user_id": 7, "summary": "legado sem escopo"},
+    {"user_id": 7, "access_scope": Principal(7, "CUSTOMER", customer_id=11, company_id=2).scope},
 ])
 def test_cannot_read_or_continue_foreign_or_previous_profile_history(client, monkeypatch, document):
     browser, persistence = client

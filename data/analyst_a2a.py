@@ -1,10 +1,10 @@
 """A2A 1.0 via SDK oficial; identidade assinada pelo backend, nunca pelo LLM."""
 import asyncio
-from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import httpx
 import jwt
+from anyio import from_thread
 from a2a import helpers
 from a2a.client import ClientConfig, create_client
 from a2a.server.agent_execution import AgentExecutor
@@ -21,7 +21,8 @@ from starlette.authentication import SimpleUser
 from starlette.responses import JSONResponse
 
 from config import settings
-from data.access import Principal, principal
+from data.access import principal
+from data.auth import analyst_signing_key, create_analyst_token, verify_analyst_token
 from data.answer_sources import consulted, public_sources
 
 RPC_PATH = "/a2a/analyst"
@@ -29,20 +30,13 @@ CARD_PATH = "/a2a/analyst/.well-known/agent-card.json"
 
 
 def endpoint():
-    value = settings.analyst_a2a_url
-    parsed = urlparse(value or "")
+    value = settings.analyst_a2a_url or "http://127.0.0.1" + RPC_PATH
+    parsed = urlparse(value)
     if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password
             or parsed.query or parsed.fragment or parsed.path != RPC_PATH
             or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})):
         raise RuntimeError("Configure ANALYST_A2A_URL com o endpoint HTTPS do analista ou loopback local.")
     return value
-
-
-def signing_key():
-    value = settings.analyst_a2a_token
-    if value is None or len(value.get_secret_value()) < 32:
-        raise RuntimeError("Configure ANALYST_A2A_TOKEN com pelo menos 32 caracteres no servidor.")
-    return value.get_secret_value()
 
 
 def agent_card(url):
@@ -62,6 +56,7 @@ class AnalystContext(ServerCallContextBuilder):
         return ServerCallContext(user=StarletteUser(SimpleUser(identity.scope)), state={
             "principal": identity, "headers": {"a2a-version": request.headers.get("a2a-version", "")},
             "trace_parent": request.headers.get("langsmith-trace"),
+            "mcp": getattr(request.app.state, "analyst_mcp", None),
         })
 
 
@@ -72,9 +67,12 @@ class AnalystExecutor(AgentExecutor):
         if not question.strip() or len(question) > 15000:
             payload = {"answer": "Informe uma pergunta de até 15.000 caracteres.", "evidence": [], "sources": []}
         else:
+            if context.call_context.state["mcp"] is None:
+                raise RuntimeError("O ciclo de vida da aplicação precisa inicializar o MCP.")
             parent = context.call_context.state.get("trace_parent")
             with tracing_context(parent={"langsmith-trace": parent} if parent else None):
-                payload = await asyncio.wait_for(run_analyst(question, context.call_context.state["principal"]),
+                payload = await asyncio.wait_for(run_analyst(question, context.call_context.state["principal"],
+                                                            context.call_context.state["mcp"]),
                                                  timeout=settings.analyst_timeout_seconds - 5)
         message = helpers.new_text_message("Análise concluída.")
         del message.parts[:]
@@ -90,19 +88,16 @@ def install_analyst_routes(app):
     async def analyst_auth(request, call_next):
         if request.url.path.rstrip("/") == RPC_PATH:
             try:
-                key = signing_key()
+                analyst_signing_key()
             except RuntimeError:
                 return JSONResponse({"detail": "Analista não configurado."}, status_code=503)
             try:
                 header = request.headers.get("authorization", "")
                 if not header.startswith("Bearer "):
                     raise jwt.InvalidTokenError()
-                claims = jwt.decode(header[7:], key, algorithms=["HS256"], audience="kairos-analyst",
-                                    issuer="kairos-chatbot", options={"require": ["sub", "exp", "iat", "role", "company_id"]})
-                user_id, company_id = int(claims["sub"]), claims["company_id"]
-                if claims["role"] != "MANAGER" or user_id <= 0 or type(company_id) is not int or company_id <= 0:
-                    return JSONResponse({"detail": "Perfil sem acesso ao analista."}, status_code=403)
-                request.state.analyst_identity = Principal(user_id, "MANAGER", company_id=company_id)
+                request.state.analyst_identity = verify_analyst_token(header[7:])
+            except PermissionError:
+                return JSONResponse({"detail": "Perfil sem acesso ao analista."}, status_code=403)
             except (jwt.InvalidTokenError, ValueError, TypeError, KeyError):
                 return JSONResponse({"detail": "Credencial A2A inválida."}, status_code=401)
         return await call_next(request)
@@ -119,11 +114,17 @@ def install_analyst_routes(app):
 
 
 async def request_analysis(question, identity, http=None):
+    if http is None and not settings.analyst_a2a_url:
+        from api import app
+        # API em execução reutiliza seu ciclo de vida; console inicializa/encerra por código.
+        if getattr(app.state, "analyst_mcp", None) is None:
+            async with app.router.lifespan_context(app):
+                return await request_analysis(question, identity)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                      timeout=settings.analyst_timeout_seconds, trust_env=False) as local:
+            return await request_analysis(question, identity, local)
     url = endpoint()
-    now = datetime.now(timezone.utc)
-    token = jwt.encode({"sub": str(identity.user_id), "role": identity.role, "company_id": identity.company_id,
-                        "iss": "kairos-chatbot", "aud": "kairos-analyst", "iat": now, "exp": now + timedelta(minutes=2)},
-                       signing_key(), algorithm="HS256")
+    token = create_analyst_token(identity)
     own_http = http is None
     http = http or httpx.AsyncClient(timeout=settings.analyst_timeout_seconds, trust_env=False, follow_redirects=False)
     try:
@@ -153,7 +154,13 @@ def invoke_analyst(payload, **kwargs):
     if identity is None or identity.role != "MANAGER" or identity.company_id is None:
         raise PermissionError("Análise estratégica exige identidade de gerente e empresa verificadas.")
     question = "\n".join(message.text for message in payload["messages"])[-15000:]
-    result = asyncio.run(request_analysis(question, identity))
+    from api import app
+    loop_token = getattr(app.state, "analyst_loop_token", None)
+    if loop_token is not None:
+        # O grafo síncrono roda em worker; o MCP permanece no loop que o iniciou.
+        result = from_thread.run(request_analysis, question, identity, token=loop_token)
+    else:
+        result = asyncio.run(request_analysis(question, identity))
     messages = list(payload["messages"])
     for index, evidence in enumerate(result.get("evidence", [])):
         messages.append(ToolMessage(content=evidence["conteudo"], name=evidence["ferramenta"],

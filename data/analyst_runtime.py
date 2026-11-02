@@ -1,15 +1,12 @@
 """Analista: MCP para histórico Gold e especialistas existentes para o estado operacional."""
 import json
-import os
-import sys
 from typing import Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage, ToolMessage
-from mcp import Client, StdioServerParameters
 
-from config import ROOT_DIR, settings
+from data.auth import create_analyst_token
 from data.answer_sources import capture_sources, public_sources
 from data.request_context import ChatContext, chat_context
 
@@ -29,60 +26,56 @@ Responda em português, com insights curtos, evidências e ações práticas par
 """
 
 
-async def run_analyst(question, identity):
+async def run_analyst(question, identity, mcp):
     if identity.role != "MANAGER" or identity.company_id is None:
         raise PermissionError("Análises estratégicas exigem gerente com empresa vinculada.")
     from agents import agente_estoque, agente_vendas
     from llms import fallback_middleware, llm_principal
 
     evidence, sources = [], set()
-    env = dict(os.environ, KAIROS_ANALYST_COMPANY_ID=str(identity.company_id), LANGSMITH_TRACING="false",
-               PYTHONIOENCODING="utf-8")
-    params = StdioServerParameters(command=sys.executable, args=["-m", "data.analyst_mcp"], cwd=ROOT_DIR, env=env)
     token = chat_context.set(ChatContext(identity.user_id, None, "analyst-a2a", identity))
     try:
-        async with Client(params, read_timeout_seconds=35) as mcp:
-            async def call_mcp(name, arguments):
-                result = await mcp.call_tool(name, arguments)
-                if result.is_error or not isinstance(result.structured_content, dict):
-                    payload = {"ok": False, "erro": "Não foi possível consultar esta fonte pelo MCP."}
-                else:
-                    payload = result.structured_content
-                evidence.append({"ferramenta": name, "conteudo": json.dumps(payload, ensure_ascii=False),
-                                 "status": "success" if payload.get("ok") else "error"})
-                if payload.get("ok") and payload.get("fonte") == "database":
-                    sources.add("database")
-                return payload
+        async def call_mcp(name, arguments):
+            result = await mcp.call_tool(name, arguments, meta={"kairos_identity": create_analyst_token(identity)})
+            if result.is_error or not isinstance(result.structured_content, dict):
+                payload = {"ok": False, "erro": "Não foi possível consultar esta fonte pelo MCP."}
+            else:
+                payload = result.structured_content
+            evidence.append({"ferramenta": name, "conteudo": json.dumps(payload, ensure_ascii=False),
+                             "status": "success" if payload.get("ok") else "error"})
+            if payload.get("ok") and payload.get("fonte") == "database":
+                sources.add("database")
+            return payload
 
-            @tool
-            async def consultar_indicador(
-                indicador: Literal["vendas_diarias", "vendas_por_categoria", "estoque_por_produto", "rupturas", "reposicoes", "operacoes"],
-                data_inicio: str | None = None, data_fim: str | None = None, limite: int = 20,
-            ) -> dict:
-                """Consulta por MCP um indicador Gold. Vendas exigem datas inicial e final; o servidor limita e isola a empresa."""
-                return await call_mcp("consultar_indicador", {"indicador": indicador, "data_inicio": data_inicio,
-                                                           "data_fim": data_fim, "limite": limite})
+        @tool
+        async def consultar_indicador(
+            indicador: Literal["vendas_diarias", "vendas_por_categoria", "estoque_por_produto", "rupturas", "reposicoes", "operacoes"],
+            data_inicio: str | None = None, data_fim: str | None = None, limite: int = 20,
+        ) -> dict:
+            """Consulta por MCP um indicador Gold. Vendas exigem datas inicial e final; o servidor limita e isola a empresa."""
+            return await call_mcp("consultar_indicador", {"indicador": indicador, "data_inicio": data_inicio,
+                                                       "data_fim": data_fim, "limite": limite})
 
-            @tool
-            async def consultar_dashboard() -> dict:
-                """Consulta por MCP metadados do dashboard. Não obtém imagens nem interpreta visualmente os gráficos."""
-                return await call_mcp("consultar_dashboard", {})
+        @tool
+        async def consultar_dashboard() -> dict:
+            """Consulta por MCP metadados do dashboard. Não obtém imagens nem interpreta visualmente os gráficos."""
+            return await call_mcp("consultar_dashboard", {})
 
-            @tool
-            async def consultar_especialista(especialista: Literal["estoque", "vendas"], pergunta: str) -> str:
-                """Consulta o agente especialista existente para comparar informações operacionais com o histórico Gold."""
-                agent = agente_estoque if especialista == "estoque" else agente_vendas
-                with capture_sources() as consulted:
-                    result = await agent.ainvoke({"messages": [HumanMessage(content=pergunta)]}, config={"recursion_limit": 12})
-                sources.update(consulted)
-                evidence.extend({"ferramenta": message.name, "conteudo": message.content, "status": message.status}
-                                for message in result["messages"] if isinstance(message, ToolMessage))
-                return result["messages"][-1].text
+        @tool
+        async def consultar_especialista(especialista: Literal["estoque", "vendas"], pergunta: str) -> str:
+            """Consulta o agente especialista existente para comparar informações operacionais com o histórico Gold."""
+            agent = agente_estoque if especialista == "estoque" else agente_vendas
+            with capture_sources() as consulted:
+                result = await agent.ainvoke({"messages": [HumanMessage(content=pergunta)]}, config={"recursion_limit": 12})
+            sources.update(consulted)
+            evidence.extend({"ferramenta": message.name, "conteudo": message.content, "status": message.status}
+                            for message in result["messages"] if isinstance(message, ToolMessage))
+            return result["messages"][-1].text
 
-            agent = create_agent(model=llm_principal,
-                                 tools=[consultar_indicador, consultar_dashboard, consultar_especialista],
-                                 system_prompt=ANALYST_PROMPT, middleware=[fallback_middleware()])
-            result = await agent.ainvoke({"messages": [HumanMessage(content=question)]}, config={"recursion_limit": 16})
-            return {"answer": result["messages"][-1].text, "evidence": evidence, "sources": public_sources(sources)}
+        agent = create_agent(model=llm_principal,
+                             tools=[consultar_indicador, consultar_dashboard, consultar_especialista],
+                             system_prompt=ANALYST_PROMPT, middleware=[fallback_middleware()])
+        result = await agent.ainvoke({"messages": [HumanMessage(content=question)]}, config={"recursion_limit": 16})
+        return {"answer": result["messages"][-1].text, "evidence": evidence, "sources": public_sources(sources)}
     finally:
         chat_context.reset(token)
