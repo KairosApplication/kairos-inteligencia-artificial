@@ -1,25 +1,4 @@
-"""
-Observabilidade e memória de longo prazo complementar do Kairos.
-
-Este módulo é responsável por registrar, no MongoDB, as informações
-de rastreamento (tracing) de cada execução do grafo de agentes,
-complementando o histórico de conversa já tratado por
-`data/memory_store.py`. As collections utilizadas são:
-
-* ai_executions: uma execução completa do grafo (uma pergunta do
-  usuário, do início ao fim).
-* agent_traces: uma etapa (nó) executada dentro de uma execução do
-  grafo (guardrail, orquestrador, especialista, juiz, memória).
-* guardrail_events: decisão do Guardrail de Segurança sobre a
-  mensagem do usuário de uma execução.
-* judge_evaluations: decisão do Juiz sobre a resposta produzida por
-  um especialista.
-* feedback: avaliação (nota e comentário) dada pelo usuário sobre a
-  resposta final de uma execução.
-* user_memory: preferências e fatos sobre o usuário, extraídos ao
-  longo das conversas, e reaproveitados como memória de longo prazo
-  entre execuções distintas do chat.
-"""
+"""Persiste execuções, traces, avaliações, feedback e memórias de longo prazo."""
 
 import threading
 import logging
@@ -44,33 +23,18 @@ NOME_USER_MEMORY = "user_memory"
 
 
 def _agora() -> str:
-    """
-    Retorna o timestamp atual em UTC, no mesmo formato de string já
-    utilizado pelos documentos de `data/memory_store.py`.
-    """
+    """Retorna o instante atual em UTC."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _agora_dt() -> datetime:
-    """
-    Retorna o instante atual em UTC como objeto datetime, utilizado
-    para calcular a latência total de uma execução (`ai_executions`)
-    a partir do seu horário de início.
-    """
+    """Retorna o datetime UTC usado no cálculo de latência."""
     return datetime.now(timezone.utc)
 
 
-# ==================================================
-# AI_EXECUTIONS
-# ==================================================
 
 def iniciar_execucao(user_id: int, conversation_id: ObjectId, pergunta: str) -> ObjectId:
-    """
-    Registra o início de uma nova execução do grafo de agentes (uma
-    pergunta do usuário) na collection `ai_executions`, retornando o
-    identificador (`execution_id`) que amarra os demais registros
-    (traces, evento do guardrail, avaliação do juiz) a esta execução.
-    """
+    """Abre uma execução e retorna o ID que vincula seus traces e avaliações."""
     if via_api():
         return api_observability.iniciar_execucao(user_id, conversation_id, pergunta)
     colecao = get_database()[NOME_EXECUCOES]
@@ -93,22 +57,8 @@ def iniciar_execucao(user_id: int, conversation_id: ObjectId, pergunta: str) -> 
 
 
 def finalizar_execucao(execution_id: ObjectId, status: str, resposta: str) -> None:
-    """
-    Conclui uma execução iniciada por `iniciar_execucao`.
-
-    A latência total é calculada a partir do horário de início
-    registrado no próprio documento. A lista de agentes utilizados é
-    agregada a partir dos traces (`agent_traces`) já registrados para
-    esta execução no momento da chamada.
-
-    O custo estimado é calculado com o que já estiver disponível
-    nesse momento (`_atualizar_custo_execucao`), mas pode continuar
-    sendo ajustado por mais alguns segundos depois: as métricas de
-    cada trace são obtidas do LangSmith em segundo plano (ver
-    `registrar_trace_agente`), então o custo final da execução só
-    fica definitivo quando o último trace terminar de ser
-    complementado.
-    """
+    """Fecha a execução, agregando latência, agentes e custos disponíveis.
+    O custo pode ser atualizado quando as métricas do LangSmith chegarem."""
     if via_api():
         return api_observability.finalizar_execucao(execution_id, status, resposta)
     colecao_execucoes = get_database()[NOME_EXECUCOES]
@@ -147,9 +97,6 @@ def finalizar_execucao(execution_id: ObjectId, status: str, resposta: str) -> No
     _atualizar_custo_execucao(execution_id)
 
 
-# ==================================================
-# AGENT_TRACES
-# ==================================================
 
 def registrar_trace_agente(
     execution_id: ObjectId,
@@ -161,36 +108,8 @@ def registrar_trace_agente(
     saida: dict,
     langsmith_run_id: Optional[str] = None
 ) -> None:
-    """
-    Registra, na collection `agent_traces`, a execução de uma etapa
-    (nó) do grafo de agentes dentro de uma execução específica.
-
-    `langsmith_run_id` é o identificador do run correspondente no
-    LangSmith (gerado pelo nó chamador ANTES do `.invoke()` e passado
-    via `config={"run_id": ...}`, ver `gerar_run_id`). Quando
-    informado, o trace é inserido imediatamente com os campos de
-    modelo/tokens/custo em None, e a busca das métricas reais dessa
-    chamada na API do LangSmith é delegada a uma thread em segundo
-    plano (ver `_completar_metricas_em_segundo_plano`).
-
-    Essa busca é assíncrona porque o LangSmith processa os runs de
-    forma assíncrona: mesmo com `buscar_metricas_run` tentando
-    algumas vezes antes de desistir, uma única chamada pode levar
-    vários segundos para retornar. Bloquear cada nó do grafo por esse
-    tempo tornaria o chat perceptivelmente mais lento a cada resposta;
-    por isso o registro do trace nunca espera essas métricas — elas
-    são preenchidas em `agent_traces` (e agregadas em `ai_executions`,
-    via `_atualizar_custo_execucao`) posteriormente, sem impactar a
-    resposta já entregue ao usuário.
-
-    A latência do trace é sempre calculada localmente a partir de
-    `started_at`/`completed_at`; diferente de tokens/custo, esse
-    valor já é conhecido de imediato e não depende do LangSmith.
-
-    Nós que não envolvem chamada a um modelo (ex.: `memoria_node`)
-    não possuem run do LangSmith; nesse caso `langsmith_run_id` deve
-    ser omitido e os campos de métricas permanecem None.
-    """
+    """Persiste a etapa com latência local; busca métricas do run_id em segundo plano.
+    O chamador gera esse ID antes do invoke. Sem run, modelo/tokens/custo ficam None."""
     if via_api():
         return api_observability.registrar_trace_agente(
             execution_id, agent_name, status, started_at, completed_at, entrada, saida, langsmith_run_id,
@@ -227,17 +146,8 @@ def registrar_trace_agente(
 def _completar_metricas_em_segundo_plano(
     trace_id: ObjectId, execution_id: ObjectId, langsmith_run_id: str
 ) -> None:
-    """
-    Busca, em segundo plano, as métricas reais (modelo, tokens e
-    custo em USD) de um run do LangSmith e as grava no trace já
-    inserido por `registrar_trace_agente`, sem bloquear o fluxo do
-    grafo. Ao final, também recalcula o custo agregado da execução em
-    `ai_executions` (ver `_atualizar_custo_execucao`).
-
-    Executada em uma thread separada (`daemon=True`): se o processo
-    principal terminar antes de uma atualização concluir, essa thread
-    é descartada silenciosamente, sem impedir o encerramento do chat.
-    """
+    """Atualiza métricas do trace e custo da execução sem bloquear o grafo.
+    A thread daemon pode encerrar antes da atualização se o processo terminar."""
     try:
         metricas = buscar_metricas_run(langsmith_run_id)
     except Exception:
@@ -245,9 +155,7 @@ def _completar_metricas_em_segundo_plano(
         return
 
     if metricas is None:
-        # Métricas indisponíveis mesmo após as tentativas de
-        # `buscar_metricas_run`; o trace permanece com os campos em
-        # None, refletindo que o custo real não pôde ser confirmado.
+        # None preserva a distinção entre custo desconhecido e custo zero.
         return
 
     colecao_traces = get_database()[NOME_TRACES]
@@ -273,18 +181,7 @@ def _completar_metricas_em_segundo_plano(
 
 
 def _atualizar_custo_execucao(execution_id: ObjectId) -> None:
-    """
-    Recalcula e persiste, em `ai_executions`, o custo total estimado
-    de uma execução, somando `estimated_cost_usd` de todos os traces
-    já registrados para ela em `agent_traces`.
-
-    Chamada tanto por `finalizar_execucao` (com os traces disponíveis
-    até aquele momento) quanto por
-    `_completar_metricas_em_segundo_plano` (conforme as métricas de
-    cada trace chegam do LangSmith, em segundo plano); por isso o
-    custo de uma execução pode continuar sendo ajustado por um breve
-    período após ela já ter sido finalizada.
-    """
+    """Soma os custos disponíveis dos traces; pode atualizar uma execução já encerrada."""
     colecao_execucoes = get_database()[NOME_EXECUCOES]
     colecao_traces = get_database()[NOME_TRACES]
 
@@ -304,18 +201,11 @@ def _atualizar_custo_execucao(execution_id: ObjectId) -> None:
     )
 
 
-# ==================================================
-# GUARDRAIL_EVENTS
-# ==================================================
 
 def registrar_evento_guardrail(
     execution_id: ObjectId, bloqueado: bool, categoria: str, motivo: str
 ) -> None:
-    """
-    Registra, na collection `guardrail_events`, a decisão do
-    Guardrail de Segurança sobre a mensagem do usuário de uma
-    execução.
-    """
+    """Persiste a decisão do guardrail vinculada à execução."""
     if via_api():
         return api_observability.registrar_evento_guardrail(execution_id, bloqueado, categoria, motivo)
     colecao = get_database()[NOME_GUARDRAIL_EVENTS]
@@ -330,15 +220,9 @@ def registrar_evento_guardrail(
     })
 
 
-# ==================================================
-# JUDGE_EVALUATIONS
-# ==================================================
 
 def registrar_avaliacao_juiz(execution_id: ObjectId, aprovado: bool, motivo: str) -> None:
-    """
-    Registra, na collection `judge_evaluations`, a decisão do Juiz
-    sobre a resposta produzida pelo especialista de uma execução.
-    """
+    """Persiste a avaliação do juiz vinculada à execução."""
     if via_api():
         return api_observability.registrar_avaliacao_juiz(execution_id, aprovado, motivo)
     colecao = get_database()[NOME_JUDGE_EVALUATIONS]
@@ -355,18 +239,11 @@ def registrar_avaliacao_juiz(execution_id: ObjectId, aprovado: bool, motivo: str
     })
 
 
-# ==================================================
-# FEEDBACK
-# ==================================================
 
 def registrar_feedback(
     execution_id: ObjectId, user_id: int, rating: int, comment: Optional[str] = None
 ) -> None:
-    """
-    Registra, na collection `feedback`, a avaliação (nota de 1 a 5 e
-    comentário opcional) dada pelo usuário sobre a resposta final de
-    uma execução.
-    """
+    """Persiste nota de 1 a 5 e comentário opcional para a execução."""
     if via_api():
         return api_observability.registrar_feedback(execution_id, user_id, rating, comment)
     colecao = get_database()[NOME_FEEDBACK]
@@ -380,19 +257,9 @@ def registrar_feedback(
     })
 
 
-# ==================================================
-# USER_MEMORY
-# ==================================================
 
 def registrar_memorias(user_id: int, memorias: list[dict]) -> None:
-    """
-    Adiciona novas memórias de longo prazo (preferências ou fatos
-    sobre o usuário) na collection `user_memory`, criando o
-    documento do usuário caso ainda não exista.
-
-    Cada item de `memorias` deve conter as chaves "tipo", "conteudo"
-    e "importancia".
-    """
+    """Adiciona memórias com tipo, conteudo e importancia ao usuário."""
     if not memorias:
         return
 
@@ -424,11 +291,7 @@ def registrar_memorias(user_id: int, memorias: list[dict]) -> None:
 
 
 def carregar_memorias(user_id: int) -> list[dict]:
-    """
-    Carrega as memórias de longo prazo já registradas para o
-    usuário, ordenadas das mais importantes para as menos
-    importantes.
-    """
+    """Carrega memórias do usuário em ordem decrescente de importância."""
     if via_api():
         return api_observability.carregar_memorias(user_id)
     colecao = get_database()[NOME_USER_MEMORY]

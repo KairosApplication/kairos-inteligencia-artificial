@@ -16,11 +16,7 @@ def _executar_consulta(sql: str, params: dict) -> list:
 def _classificar_severidade(
     quantidade: int, percentual: Optional[float], corte_critico: float, corte_baixo: float
 ) -> str:
-    """
-    Classifica o risco de ruptura de um item com base na quantidade
-    atual e no percentual de ocupação da gôndola, usando os limites
-    operacionais configurados, independentes dos filtros da consulta.
-    """
+    """Classifica ruptura e ocupação pelos limites operacionais, sem alterar os filtros."""
     if quantidade == 0:
         return "ruptura"
 
@@ -37,10 +33,7 @@ def _classificar_severidade(
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
-    """
-    Prepara um valor de texto para busca parcial com ILIKE.
-    Retorna None quando o valor não foi informado.
-    """
+    """Prepara busca parcial com ILIKE; retorna None para texto vazio."""
     if not valor or not valor.strip():
         return None
 
@@ -48,10 +41,7 @@ def _like(valor: Optional[str]) -> Optional[str]:
 
 
 def _formatar_percentual(percentual) -> str:
-    """
-    Formata o percentual de ocupação retornado pelo banco (Decimal)
-    como texto, tratando o caso em que não foi possível calculá-lo.
-    """
+    """Formata a ocupação como percentual ou "indefinido"."""
     if percentual is None:
         return "indefinido"
 
@@ -65,21 +55,9 @@ def consultar_niveis_estoque(
     somente_criticos: bool = False,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Consulta o nível de estoque de produtos nas gôndolas do Kairos.
-
-    Retorna, para cada produto/gôndola encontrado: quantidade atual,
-    capacidade máxima da gôndola, percentual de ocupação e a
-    severidade do risco de ruptura (ruptura, crítico, baixo ou
-    adequado).
-
-    Parâmetros:
-        produto: filtra pelo nome (ou parte do nome) do produto.
-        setor: filtra pelo nome (ou parte do nome) do setor da loja.
-        somente_criticos: quando verdadeiro, retorna apenas itens
-            classificados como "crítico" ou "ruptura".
-        limite: quantidade máxima de resultados retornados.
-    """
+    """Consulta quantidade, capacidade, ocupação e risco de ruptura por produto/gôndola.
+    produto e setor aceitam nomes parciais; somente_criticos inclui apenas ruptura/crítico.
+    limite define o máximo de resultados."""
     limite, aviso = validar_limite(limite)
     if aviso:
         return aviso
@@ -159,18 +137,9 @@ def listar_alertas_reposicao(
     apenas_pendentes: bool = True,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Lista os alertas de ruptura de estoque registrados no sistema.
-
-    Um alerta é considerado pendente quando ainda não possui data
-    de resolução registrada.
-
-    Parâmetros:
-        setor: filtra pelo nome (ou parte do nome) do setor da loja.
-        apenas_pendentes: quando verdadeiro (padrão), retorna somente
-            alertas que ainda não foram resolvidos.
-        limite: quantidade máxima de resultados retornados.
-    """
+    """Lista alertas de ruptura, filtrando setor por nome parcial.
+    apenas_pendentes=True exclui alertas com data de resolução.
+    limite define o máximo de resultados."""
     limite, aviso = validar_limite(limite)
     if aviso:
         return aviso
@@ -231,17 +200,9 @@ def recomendar_prioridades_reposicao(
     setor: Optional[str] = None,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Recomenda prioridades de reposição com base no nível de estoque
-    e na existência de alertas de ruptura ativos.
-
-    Rupturas precedem níveis críticos e baixos. Alertas ativos e
-    menor ocupação desempatarão itens da mesma faixa de severidade.
-
-    Parâmetros:
-        setor: filtra pelo nome (ou parte do nome) do setor da loja.
-        limite: quantidade máxima de recomendações retornadas.
-    """
+    """Prioriza rupturas, níveis críticos e baixos para reposição.
+    Alertas ativos e menor ocupação desempatam itens da mesma severidade.
+    setor aceita nome parcial; limite define o máximo de recomendações."""
     limite, aviso = validar_limite(limite, padrao=settings.limite_padrao_recomendacoes)
     if aviso:
         return aviso

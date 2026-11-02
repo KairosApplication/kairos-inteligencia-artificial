@@ -6,11 +6,8 @@ from pydantic import BaseModel, Field, field_validator
 from data.conversation_middleware import MemoryContext
 
 
-# SCHEMAS DE SAÍDA ESTRUTURADA
 class AvaliacaoGuardrail(BaseModel):
-    """
-    Define a saída esperada do Guardrail de Segurança.
-    """
+    """Decisão do guardrail de segurança."""
 
     bloqueado: bool = Field(description="Indica se a mensagem representa uma tentativa de manipulação e deve ser bloqueada.")
 
@@ -27,34 +24,21 @@ class AvaliacaoGuardrail(BaseModel):
 
 
 class Roteamento(BaseModel):
-    """
-    Define a saída esperada do Orquestrador.
-    """
+    """Especialista escolhido pelo orquestrador."""
 
     rota: Literal["faq", "estoque", "vendas", "clientes", "analista"] = Field(description="Categoria do especialista que deve atender à solicitação.")
 
     @field_validator("rota", mode="before")
     @classmethod
     def normalizar_rota(cls, valor):
-        """
-        Normaliza a rota retornada pelo modelo (remove espaços e
-        converte para minúsculas) antes da validação do Literal.
-
-        A API da Groq não garante 100% de aderência ao schema
-        (o modo `strict` não é suportado por todos os modelos), então
-        o modelo eventualmente retorna a rota em maiúsculas (ex.:
-        "FAQ") mesmo com o schema definindo apenas valores em
-        minúsculas. Essa normalização evita que isso quebre o parser.
-        """
+        """Remove espaços e normaliza maiúsculas antes da validação da rota."""
         if isinstance(valor, str):
             return valor.strip().lower()
         return valor
 
 
 class AvaliacaoJuiz(BaseModel):
-    """
-    Define a saída esperada do Juiz.
-    """
+    """Decisão do juiz sobre a resposta."""
 
     aprovado: bool = Field(description="Indica se a resposta pode ser entregue ao usuário.")
 
@@ -62,9 +46,7 @@ class AvaliacaoJuiz(BaseModel):
 
 
 class MemoriaExtraida(BaseModel):
-    """
-    Define uma única memória de longo prazo extraída de um turno.
-    """
+    """Memória extraída de um turno aprovado."""
 
     tipo: Literal["preferencia", "fato", "restricao"] = Field(description="Categoria da memória extraída.")
 
@@ -74,14 +56,11 @@ class MemoriaExtraida(BaseModel):
 
 
 class ExtracaoMemoria(BaseModel):
-    """
-    Define a saída esperada do Agente de Memória de Longo Prazo.
-    """
+    """Memórias extraídas para atendimentos futuros."""
 
     memorias: list[MemoriaExtraida] = Field(description="Lista de memórias extraídas do turno. Pode ser vazia.")
 
 
-# ESTADO DO GRAFO
 class GraphState(TypedDict):
     pergunta: str
     resposta: str
@@ -91,14 +70,13 @@ class GraphState(TypedDict):
     tentativas: int
     bloqueado: bool
     categoria_bloqueio: str
-    # Memória de longo prazo (preenchidos pelo memoria_node)
+    # Contexto carregado pelo memoria_node.
     user_id: int
     conversation_id: object
     historico: list[BaseMessage]
     memory_context: MemoryContext
     memorias_usuario: list[dict]
-    # Observabilidade (preenchidos pelo memoria_node / consumidos por
-    # todos os demais nós para registrar seus próprios traces)
+    # Identificador compartilhado pelos traces do turno.
     execution_id: object
     evidencias: list[dict]
     sources: list[str]

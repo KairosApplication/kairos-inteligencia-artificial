@@ -38,21 +38,8 @@ def _validar_saida(saida):
     return saida["parsed"]
 
 
-# NODE - MEMÓRIA DE LONGO PRAZO
 def memoria_node(state: GraphState):
-    """
-    Carrega, do MongoDB, a conversa ativa do usuário, o histórico de
-    contexto (resumo mais recente + janela de mensagens brutas ainda
-    não resumidas) e as memórias de longo prazo já extraídas sobre o
-    usuário (collection `user_memory`).
-
-    Também abre o registro de observabilidade da execução atual
-    (collection `ai_executions`), que será encerrado por
-    `guardrail_node` (quando a mensagem for bloqueada) ou por
-    `juiz_node` (quando o fluxo terminar em uma resposta entregue).
-
-    Executado antes do Guardrail, no início de cada turno.
-    """
+    """Carrega conversa e memórias do usuário e abre a observabilidade do turno antes do guardrail."""
     inicio = _agora_dt()
 
     user_id = state.get("user_id", USUARIO_PADRAO_ID)
@@ -109,15 +96,7 @@ def memoria_node(state: GraphState):
 def _montar_mensagens_especialista(
     pergunta: str, historico: list[BaseMessage], memorias: list[dict]
 ) -> list[BaseMessage]:
-    """
-    Monta a lista de mensagens enviada ao especialista: o histórico
-    de contexto (resumo + janela recente), seguido, quando houver
-    memórias de longo prazo já extraídas sobre o usuário, de uma
-    mensagem adicional com esse contexto, e por fim a pergunta atual.
-
-    As memórias são contexto adicional apenas deste turno e não são
-    persistidas novamente como mensagens da conversa.
-    """
+    """Combina histórico, memórias e pergunta; não persiste novamente as memórias como mensagens."""
     mensagens = list(historico)
 
     if memorias:
@@ -136,7 +115,6 @@ def _montar_mensagens_especialista(
     return mensagens
 
 
-# NODE - GUARDRAIL DE SEGURANÇA
 def guardrail_node(state: GraphState):
     inicio = _agora_dt()
     pergunta = state["pergunta"]
@@ -186,20 +164,17 @@ def guardrail_node(state: GraphState):
     )
 
     if resultado.bloqueado:
-        # A mensagem foi bloqueada: o fluxo termina aqui (ver
-        # decidir_bloqueio), então a execução é encerrada agora.
+        # O bloqueio encerra o fluxo antes do juiz.
         finalizar_execucao(execution_id, "BLOCKED", resposta_bloqueio)
 
     return {
         "bloqueado": resultado.bloqueado,
         "categoria_bloqueio": resultado.categoria,
-        # Preenche a resposta antecipadamente. Só será usada quando
-        # a mensagem for bloqueada (ver decidir_bloqueio).
+    # A resposta antecipada só é usada no bloqueio.
         "resposta": resposta_bloqueio if resultado.bloqueado else state.get("resposta", "")
     }
 
 
-# NODE ORQUESTRADOR
 def orquestrador_node(state: GraphState):
     inicio = _agora_dt()
     pergunta = state["pergunta"]
@@ -233,12 +208,7 @@ def orquestrador_node(state: GraphState):
 
 
 def _executar_especialista(nome_agente: str, invocar, state: GraphState) -> dict:
-    """
-    Lógica comum aos nós especialistas: monta as mensagens de entrada
-    (histórico + memórias de longo prazo + pergunta atual), invoca o agente, registra o trace
-    da execução em `agent_traces` e incrementa o contador de
-    tentativas.
-    """
+    """Invoca o especialista com contexto, registra o trace e incrementa tentativas."""
     try:
         identity = require_domain(nome_agente)
     except PermissionError:
@@ -292,7 +262,6 @@ def _executar_especialista(nome_agente: str, invocar, state: GraphState) -> dict
         langsmith_run_id=langsmith_run_id
     )
 
-    # Incrementa o número de tentativas.
     tentativas = state.get("tentativas", 0) + 1
 
     return {
@@ -303,22 +272,18 @@ def _executar_especialista(nome_agente: str, invocar, state: GraphState) -> dict
     }
 
 
-# NODE FAQ
 def faq_node(state: GraphState):
     return _executar_especialista("faq", agente_faq.invoke, state)
 
 
-# NODE ESTOQUE
 def estoque_node(state: GraphState):
     return _executar_especialista("estoque", agente_estoque.invoke, state)
 
 
-# NODE VENDAS
 def vendas_node(state: GraphState):
     return _executar_especialista("vendas", agente_vendas.invoke, state)
 
 
-# NODE CLIENTES
 def clientes_node(state: GraphState):
     return _executar_especialista("clientes", agente_clientes.invoke, state)
 
@@ -327,7 +292,6 @@ def analista_node(state: GraphState):
     return _executar_especialista("analista", invoke_analyst, state)
 
 
-# NODE - JUIZ
 def juiz_node(state: GraphState):
     inicio = _agora_dt()
     pergunta = state["pergunta"]
@@ -374,10 +338,7 @@ Avalie se a resposta produzida pode ser entregue ao usuário.
 
     registrar_avaliacao_juiz(execution_id, resultado.aprovado, resultado.motivo)
 
-    # Persiste o turno na memória de longo prazo (MongoDB) somente
-    # quando a resposta foi aprovada e será de fato entregue ao
-    # usuário. A execução é finalizada aqui, seja a resposta aprovada
-    # ou reprovada após esgotar as tentativas (ver decidir_avaliacao).
+        # Só turnos aprovados entram no histórico; a execução termina também ao esgotar tentativas.
     tentativas_esgotadas = state.get("tentativas", 0) >= settings.max_tentativas_juiz
 
     if not resultado.aprovado and tentativas_esgotadas:
@@ -406,16 +367,7 @@ Avalie se a resposta produzida pode ser entregue ao usuário.
 def _extrair_e_registrar_memorias(
     user_id: int, pergunta: str, resposta: str, execution_id: ObjectId
 ) -> None:
-    """
-    Executa o Agente de Memória de Longo Prazo sobre o turno recém
-    aprovado e persiste, na collection `user_memory`, as memórias
-    (preferências, fatos ou restrições) eventualmente extraídas sobre
-    o usuário.
-
-    Erros nesta etapa não devem interromper o fluxo principal do
-    chat: a memória de longo prazo é um complemento, não um
-    pré-requisito para entregar a resposta ao usuário.
-    """
+    """Extrai memórias do turno aprovado; falhas não impedem a entrega da resposta."""
     inicio = _agora_dt()
 
     prompt_extracao = f"""
@@ -460,8 +412,7 @@ Extraia as memórias duradouras sobre o usuário presentes neste turno.
             registrar_memorias(user_id, memorias)
 
     except Exception as erro:
-        # Falha na extração de memória não deve afetar a resposta já
-        # entregue ao usuário; apenas registra o erro no trace.
+        # Falhas de memória são registradas sem impedir a resposta.
         registrar_trace_agente(
             execution_id,
             "memoria_extracao",
@@ -473,7 +424,6 @@ Extraia as memórias duradouras sobre o usuário presentes neste turno.
         )
 
 
-# CONDITIONAL EDGE - GUARDRAIL
 def decidir_bloqueio(state: GraphState):
     if state["bloqueado"]:
         return "fim"
@@ -481,7 +431,6 @@ def decidir_bloqueio(state: GraphState):
     return "orquestrador"
 
 
-# CONDITIONAL EDGE - ORQUESTRADOR
 def decidir_rota(state: GraphState):
     rota = state["rota"]
 
@@ -497,26 +446,15 @@ def decidir_rota(state: GraphState):
     if rota == "clientes":
         return "clientes"
 
-    # Fallback.
-    #
-    # Quando os outros especialistas forem implementados,
-    # este fallback deverá ser substituído ou tratado
-    # explicitamente.
     return "faq"
 
 
-# CONDITIONAL EDGE - JUIZ
 def decidir_avaliacao(state: GraphState):
-    # Resposta aprovada
     if state["aprovado"]:
         return "fim"
 
-    # Limite de tentativas
-    # Evita que o grafo entre em um loop infinito caso o especialista
-    # continue produzindo uma resposta que o Juiz rejeita.
+    # Limita as repetições quando o juiz continua rejeitando a resposta.
     if state["tentativas"] >= settings.max_tentativas_juiz:
         return "fim"
 
-    # Resposta reprovada
-    # Executa novamente o especialista que gerou a resposta.
     return state["rota"]

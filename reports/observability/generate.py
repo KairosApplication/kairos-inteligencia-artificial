@@ -1,9 +1,4 @@
-"""Gera um snapshot agregado, sem perguntas, respostas, IDs ou credenciais.
-
-Prévia: python -m reports.observability.generate --preview
-Uso real: python -m reports.observability.generate --from-api --start AAAA-MM-DD --end AAAA-MM-DD
-LangSmith: python -m reports.observability.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
-"""
+"""Gera snapshots agregados sem perguntas, respostas, IDs ou credenciais; veja --help."""
 import argparse
 import json
 import math

@@ -1,16 +1,4 @@
-"""
-Memória de longo prazo do Kairos.
-
-Este módulo é responsável por carregar e persistir o histórico de
-conversas por usuário na coleção `conversations` do MongoDB configurado
-pelo ambiente, incluindo os resumos produzidos por compactação de turnos aprovados
-(ver `data/conversation_middleware.py`).
-
-Como o histórico é armazenado no MongoDB (e não apenas em memória do
-processo Python), a conversa é retomada mesmo depois que o chat de
-teste é encerrado e executado novamente, o que caracteriza memória de
-longo prazo.
-"""
+"""Persiste conversas e carrega resumos e turnos ainda não compactados no escopo do usuário."""
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -27,18 +15,12 @@ from data.answer_sources import public_sources
 NOME_COLECAO = "conversations"
 
 def _agora() -> str:
-    """
-    Retorna o timestamp atual em UTC, no mesmo formato de string já
-    utilizado pelos documentos existentes na coleção.
-    """
+    """Retorna o instante atual em UTC."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def obter_ou_criar_conversa_ativa(user_id: int) -> dict:
-    """
-    Obtém a conversa com status ACTIVE mais recente do usuário,
-    criando uma nova (vazia) caso não exista nenhuma.
-    """
+    """Obtém a conversa ativa do usuário ou cria uma nova."""
     if via_api():
         return get_ai_api().active_conversation(user_id)
     colecao = get_database()[NOME_COLECAO]
@@ -72,12 +54,7 @@ def obter_ou_criar_conversa_ativa(user_id: int) -> dict:
 
 
 def obter_conversa_por_id(conversation_id: ObjectId) -> Optional[dict]:
-    """
-    Recarrega o documento da conversa a partir do MongoDB. Utilizado
-    a cada novo turno para obter o resumo/marcadores mais recentes,
-    já que podem ter sido atualizados pelo middleware de sumarização
-    no turno anterior.
-    """
+    """Recarrega a conversa com os resumos e marcadores atualizados."""
     if via_api():
         context = chat_context.get()
         if context is not None and context.conversation_id != conversation_id:
@@ -99,12 +76,7 @@ def obter_conversa_por_id(conversation_id: ObjectId) -> Optional[dict]:
 
 
 def carregar_mensagens_contexto(conversa: dict) -> list[BaseMessage]:
-    """
-    Reconstrói, a partir da conversa armazenada, a lista de mensagens
-    LangChain utilizada como contexto inicial de um novo turno: o
-    resumo (se existir) seguido de todas as mensagens brutas ainda
-    não cobertas por um resumo. A compactação ocorre antes desta leitura.
-    """
+    """Monta o contexto com resumo e mensagens ainda não resumidas, após a compactação."""
     mensagens: list[BaseMessage] = []
 
     resumo = conversa.get("summary")
@@ -131,23 +103,14 @@ def carregar_mensagens_contexto(conversa: dict) -> list[BaseMessage]:
 
 
 def contar_mensagens_brutas_carregadas(conversa: dict) -> int:
-    """
-    Retorna quantas mensagens brutas foram efetivamente incluídas por
-    `carregar_mensagens_contexto` para a conversa informada.
-
-    A contagem não descarta mensagens pendentes de compactação.
-    """
+    """Conta as mensagens brutas do contexto, incluindo as pendentes de compactação."""
     ja_resumidas = conversa.get("summarized_count", 0)
     total_disponivel = len(conversa.get("messages", [])) - ja_resumidas
     return max(0, total_disponivel)
 
 
 def registrar_turno(conversation_id: ObjectId, pergunta: str, resposta: str, *, sources=None) -> None:
-    """
-    Adiciona a pergunta do usuário e a resposta final do agente ao
-    histórico bruto da conversa, e atualiza o horário da última
-    atividade.
-    """
+    """Persiste o par pergunta/resposta final e atualiza a atividade da conversa."""
     if via_api():
         context = chat_context.get()
         conversa = obter_conversa_por_id(conversation_id)

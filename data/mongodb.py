@@ -10,14 +10,7 @@ _client: MongoClient | None = None
 
 
 def get_client() -> MongoClient:
-    """
-    Obtém o cliente MongoDB, criando-o na primeira chamada.
-
-    `tlsCAFile=certifi.where()` garante que o handshake TLS utilize a
-    cadeia de certificados do certifi em vez de depender do armazenamento
-    de certificados do sistema operacional, que em alguns ambientes
-    Windows está desatualizado e causa falha de conexão com o Atlas.
-    """
+    """Reutiliza o cliente MongoDB com certificados do certifi para validar TLS."""
     global _client
 
     if _client is None:

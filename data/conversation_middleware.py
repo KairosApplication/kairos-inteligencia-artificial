@@ -1,8 +1,4 @@
-"""Compacta apenas turnos persistidos, antes de executar o especialista.
-
-O resumo usa marcadores absolutos e atualização condicional no MongoDB.
-Chamadas de ferramentas e respostas ainda não aprovadas nunca entram no resumo.
-"""
+"""Compacta pares aprovados com SummarizationMiddleware e atualização atômica dos marcadores."""
 import json
 import logging
 from dataclasses import dataclass
