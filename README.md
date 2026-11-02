@@ -9,9 +9,6 @@ com os especialistas de estoque e vendas.
 
 ![Arquitetura de alto nível do chatbot Kairos](observability/architecture/kairos-arquitetura.png)
 
-[Abrir imagem](observability/architecture/kairos-arquitetura.png) ·
-[SVG editável](observability/architecture/kairos-arquitetura.svg)
-
 ## Estrutura
 
 ```text
