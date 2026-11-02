@@ -156,3 +156,73 @@ def test_real_api_client_exports_only_aggregates_using_get(tmp_path, monkeypatch
     assert "PRIVATE TOKEN" not in output and "private.example.test" not in output
     assert '"mean_request_usd": 0.02' in output
     assert calls == [("GET", "/api/v1/ai-executions"), ("GET", "/api/v1/agent-traces")]
+
+
+def test_langsmith_uses_trace_totals_excludes_standalone_runs_and_projects_fields():
+    import asyncio
+    from types import SimpleNamespace as NS
+    from reports.observability.langsmith_source import SELECTS, read_langsmith
+    begin = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
+    end = datetime(2026, 11, 2, 12, 0, 1, tzinfo=timezone.utc)
+    def run(key, name, kind, cost, tokens, parents):
+        return NS(id=key, trace_id="root", name=name, run_type=kind, total_cost=cost,
+                  total_tokens=tokens, parent_run_ids=parents, start_time=begin,
+                  end_time=end, status="success")
+    root = run("root", "LangGraph", "chain", 0, None, [])
+    standalone = run("other", "RunnableSequence", "chain", 999, 999, [])
+    snapshots = [NS(root_run=root, trace_aggregates=NS(total_cost=.04)),
+                 NS(root_run=standalone, trace_aggregates=NS(total_cost=999))]
+    children = [root, run("node", "faq", "chain", .04, 300, ["root"]),
+                run("llm1", "ChatOpenAI", "llm", .01, 100, ["root", "node"]),
+                run("llm2", "ChatOpenAI", "llm", .03, 200, ["root", "node"])]
+    calls = []
+    class Query:
+        def __init__(self, items):
+            self.items = items
+        def query(self, **params):
+            calls.append(params)
+            async def iterate():
+                for item in self.items:
+                    yield item
+            return iterate()
+    class Client:
+        traces = Query(snapshots)
+        runs = Query(children)
+        async def aread_project(self, **params):
+            return NS(id="PRIVATE PROJECT")
+    executions, traces, telemetry = asyncio.run(read_langsmith(
+        Client(), "PRIVATE PROJECT", "2026-11-02", "2026-11-02", 100))
+    assert len(executions) == 1
+    assert executions[0]["estimated_cost_usd"] == .04
+    assert executions[0]["cost_complete"] is True
+    assert len(traces) == 1 and traces[0]["agent_name"] == "faq"
+    assert telemetry["known_tokens"] == 300 and telemetry["model_calls"] == 2
+    assert all(call["selects"] == SELECTS for call in calls)
+    assert not set(SELECTS) & {"INPUTS", "OUTPUTS", "ERROR", "EXTRA", "METADATA"}
+    assert all("min_start_time" in call and "max_start_time" in call for call in calls)
+
+
+def test_failed_model_without_usage_does_not_prove_zero_cost():
+    from types import SimpleNamespace as NS
+    from reports.observability.langsmith_source import latency_ms, usage_confirmed
+    assert not usage_confirmed(NS(total_cost=0, total_tokens=None, status="error"))
+    assert usage_confirmed(NS(total_cost=.01, total_tokens=20, status="error"))
+    assert usage_confirmed(NS(total_cost=0, total_tokens=0, status="SUCCESS"))
+    assert latency_ms(NS(latency_seconds=1.25)) == 1250
+
+
+def test_publishing_requires_opt_in_and_does_not_relax_aggregate_privacy(tmp_path, monkeypatch):
+    import reports.observability.generate as generator
+    monkeypatch.setattr(generator, "ROOT", tmp_path)
+    monkeypatch.setattr(generator, "TEMPLATE", tmp_path / "reports/observability/index.html")
+    generator.TEMPLATE.parent.mkdir(parents=True)
+    generator.TEMPLATE.write_text('<script id="report-data" type="application/json">{}</script>')
+    raw = tmp_path / "raw.json"
+    raw.write_text(json.dumps({"executions": [execution("a")], "traces": [trace("a")]}))
+    args = ["--input", str(raw), "--start", "2026-11-02", "--end", "2026-11-02",
+            "--output", str(generator.TEMPLATE)]
+    with pytest.raises(SystemExit):
+        main(args)
+    assert main(args + ["--publish"]) == 0
+    output = generator.TEMPLATE.read_text(encoding="utf-8")
+    assert "PRIVATE QUESTION" not in output and "PRIVATE TRACE ID" not in output

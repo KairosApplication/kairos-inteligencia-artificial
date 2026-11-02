@@ -1349,9 +1349,7 @@
                         </h2><span class="badge" id="outcome-badge">Sem
                 amostra</span></div>
                     <ul class="summary-list">
-                        <li><span class="legend-label"><i
-                    class="dot dot--success"></i>Respostas aprovadas pelo
-                  juiz</span><strong id="count-success">—</strong></li>
+                        <li><span class="legend-label"><i class="dot dot--success"></i><span id="outcome-success-label">Respostas aprovadas pelo juiz</span></span><strong id="count-success">—</strong></li>
                         <li><span class="legend-label"><i class="dot dot--error"></i>Falhas
                   técnicas</span><strong id="count-errors">—</strong></li>
                         <li><span class="legend-label"><i class="dot dot--warning"></i>Bloqueios
@@ -1533,6 +1531,7 @@
                     <summary>Período, amostra e atualização</summary>
                     <p id="sample-description">A prévia não contém execuções reais.
                     </p>
+                    <p id="telemetry-description" hidden></p>
                     <p>O período inclui execuções iniciadas entre o primeiro e o último dia, no fuso America/Sao_Paulo. Os valores representam o momento da geração; o arquivo não se atualiza sozinho. Registros antigos sem offset são interpretados como UTC.</p>
                     <p
                         id="quality-description">A cobertura será informada após a geração.
@@ -1556,10 +1555,14 @@
                 </details>
                 <details class="no-print">
                     <summary>Como gerar um relatório com as métricas reais</summary>
+                    <p>Para consultar diretamente o LangSmith, use LANGSMITH_API_KEY, LANGSMITH_PROJECT e, quando necessário, LANGSMITH_ENDPOINT no ambiente privado. A consulta solicita somente campos técnicos, sem conteúdo das conversas:</p>
+                    <pre>.\.venv\Scripts\python.exe -m reports.observability.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD</pre>
+                    <p>O recorte considera somente traces raiz chamadas LangGraph; chamadas isoladas de modelo não viram consultas do chatbot. Pode-se ajustar <code>--graph-name</code> se o nome do grafo mudar. Custos totais vêm dos agregados de traces do LangSmith; custos de pais e filhos não são somados novamente.</p>
                     <p>Na raiz do repositório, com AI_API_URL e AI_API_TOKEN configurados no ambiente privado, execute substituindo as datas:
                     </p><pre>.\.venv\Scripts\python.exe -m reports.observability.generate --from-api --start AAAA-MM-DD --end AAAA-MM-DD</pre>
                     <p>O arquivo é salvo em <code>.cache/reports/observability.html</code>, fora do versionamento. O modo de leitura usa somente GET na API Java, sem alterar dados. Como a API atual não filtra datas no servidor, a leitura é paginada e limitada
                         por recurso; atingir o teto aborta a geração, sem publicar uma amostra truncada. Pode-se ajustar <code>--max-records</code> conforme o volume.</p>
+                    <p>Para publicar os indicadores agregados no repositório, use explicitamente <code>--publish --output reports/observability/index.html</code>. Credenciais e conteúdo das conversas continuam excluídos; a saída privada permanece como padrão.</p>
                     <p>Para declarar uma contagem previamente verificada de resoluções no período, acrescente <code>--confirmed-resolutions
                 QUANTIDADE</code>. A origem manual será identificada no relatório. A leitura por <code>--input arquivo.json</code> aceita uma exportação privada com listas <code>executions</code> e
                         <code>traces</code>.</p>
@@ -1571,61 +1574,7 @@
           observados e projeções apresentados separadamente ·
           USD</span></footer>
     </main>
-    <script id="report-data" type="application/json">
-        {
-            "schema_version": 1,
-            "generated_at": null,
-            "source": "preview",
-            "period": {
-                "start": null,
-                "end": null,
-                "timezone": "America/Sao_Paulo"
-            },
-            "counts": {
-                "requests": 0,
-                "finished": 0,
-                "success": 0,
-                "errors": 0,
-                "blocked": 0,
-                "rejected": 0,
-                "in_progress": 0,
-                "unknown": 0,
-                "error_rate": null
-            },
-            "latency": {
-                "graph_ms": {
-                    "count": 0,
-                    "mean": null,
-                    "p50": null,
-                    "p95": null
-                },
-                "handoff_ms": {
-                    "count": 0,
-                    "mean": null,
-                    "p50": null,
-                    "p95": null
-                },
-                "agents": []
-            },
-            "cost": {
-                "known_usd": null,
-                "complete_usd": null,
-                "complete_executions": 0,
-                "coverage": null,
-                "mean_request_usd": null
-            },
-            "resolution": {
-                "confirmed": null,
-                "source": null,
-                "cost_usd": null
-            },
-            "daily": [],
-            "quality": {
-                "invalid_dates": 0,
-                "duplicates_ignored": 0
-            }
-        }
-    </script>
+    <script id="report-data" type="application/json">{"schema_version": 1, "generated_at": "2026-11-02T14:55:30.613111+00:00", "source": "langsmith", "period": {"start": "2026-10-04", "end": "2026-11-02", "timezone": "America/Sao_Paulo"}, "counts": {"requests": 2, "finished": 2, "success": 0, "errors": 2, "blocked": null, "rejected": null, "in_progress": 0, "unknown": 0, "error_rate": 1.0}, "latency": {"graph_ms": {"count": 2, "mean": 5613.88, "p50": 5613.88, "p95": 9712.467}, "handoff_ms": {"count": 2, "mean": 2.495, "p50": 2.495, "p95": 2.83}, "agents": [{"name": "Guardrail", "calls": 2, "errors": 2, "count": 2, "mean": 1070.457, "p50": 1070.457, "p95": 1417.966}, {"name": "Contexto e memória", "calls": 2, "errors": 0, "count": 2, "mean": 4498.71, "p50": 4498.71, "p95": 8214.238}]}, "cost": {"known_usd": null, "complete_usd": null, "complete_executions": 0, "coverage": 0.0, "mean_request_usd": null}, "resolution": {"confirmed": null, "source": null, "cost_usd": null}, "daily": [{"day": "2026-10-22", "requests": 2, "errors": 2, "mean_ms": 5613.88}], "quality": {"invalid_dates": 0, "duplicates_ignored": 0}, "telemetry": {"model_calls": 2, "known_tokens": null, "calls_with_tokens": 0, "outcomes_available": false}}</script>
     <script>
         'use strict';
         const report = JSON.parse(document.getElementById('report-data').textContent);
@@ -1657,17 +1606,28 @@
             timeStyle: 'short',
             timeZone: 'America/Sao_Paulo'
         }).format(new Date(report.generated_at)) + ' · São Paulo' : 'Prévia sem métricas');
-        text('report-source', preview ? 'Aguardando dados reais' : report.source === 'api' ? 'Métricas da API de IA' : 'Exportação de métricas');
+        text('report-source', preview ? 'Aguardando dados reais' : report.source === 'api' ? 'Métricas da API de IA' : report.source === 'langsmith' ? 'LangSmith · traces do grafo' : 'Exportação de métricas');
         text('report-coverage', pct(report.cost.coverage));
         if (available) {
             text('report-notice', counts.requests ? 'Snapshot de ' + integer(counts.requests) + ' execuções. Os indicadores refletem a cobertura disponível; os cenários abaixo são projeções com premissas explícitas.' : 'Nenhuma execução encontrada no período. Os indicadores sem amostra permanecem indisponíveis.');
             text('kpi-requests', integer(counts.requests));
             text('kpi-finished', integer(counts.finished) + ' finalizadas no período');
             text('outcome-badge', integer(counts.finished) + ' finalizadas');
-            ['success', 'errors', 'blocked', 'rejected'].forEach(name => text('count-' + name, integer(counts[name])));
+            ['success', 'errors', 'blocked', 'rejected'].forEach(name => text('count-' + name, counts[name] == null ? 'Não informado' : integer(counts[name])));
             text('count-pending', integer(counts.in_progress + counts.unknown));
             text('error-count', integer(counts.errors));
             text('finished-count', integer(counts.finished));
+        }
+        if (report.source === 'langsmith') {
+            text('outcome-success-label', 'Execuções sem falha técnica');
+            text('count-blocked', 'Não informado');
+            text('count-rejected', 'Não informado');
+            text('report-notice', integer(counts.requests) + ' traces reais do grafo neste período. Esta amostra não representa automaticamente a operação atual; chamadas isoladas de modelo estão fora do recorte.');
+            const telemetry = report.telemetry;
+            if (telemetry) {
+                $('telemetry-description').hidden = false;
+                text('telemetry-description', 'LangSmith: ' + integer(telemetry.model_calls) + ' chamadas de modelo; tokens informados em ' + integer(telemetry.calls_with_tokens) + ' chamadas. Tokens conhecidos: ' + (telemetry.known_tokens == null ? 'indisponível' : integer(telemetry.known_tokens)) + '. Ausência de erro técnico não comprova aprovação pelo juiz nem resolução para o usuário. Custo zero sem tokens em chamada com erro permanece desconhecido.');
+            }
         }
         text('kpi-latency', duration(report.latency.graph_ms.p95));
         text('kpi-errors', pct(counts.error_rate));
