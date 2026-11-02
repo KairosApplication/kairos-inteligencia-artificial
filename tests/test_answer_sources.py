@@ -6,14 +6,15 @@ from bson import ObjectId
 from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 
-import api
-import graph_nodes as nodes
-from data import memory_store, postgres
-from data.access import Principal
-from data.answer_sources import capture_sources, consulted, public_sources
-from data.conversation_middleware import MemoryContext
-from schemas import AvaliacaoJuiz
-from tools import faq
+import app.api as api
+import app.graph_nodes as nodes
+from app import memory_store
+from app.integrations import postgres
+from app.access import Principal
+from app.answer_sources import capture_sources, consulted, public_sources
+from app.conversation_middleware import MemoryContext
+from app.schemas import AvaliacaoJuiz
+from app.tools import faq
 
 ID = ObjectId("000000000000000000000001")
 

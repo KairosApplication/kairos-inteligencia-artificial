@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from reports.observability.generate import build_report, main, read_bounded, render_html
+from observability.reports.generate import build_report, main, read_bounded, render_html
 
 
 def execution(key, *, cost=.02, complete=True, status="SUCCESS", when="2026-11-02T12:00:00Z"):
@@ -109,7 +109,7 @@ def test_pagination_cap_fails_instead_of_publishing_a_truncated_report():
 def test_real_report_is_written_privately_and_preview_needs_no_credentials(tmp_path, monkeypatch):
     private_input = tmp_path / "input.json"
     private_input.write_text(json.dumps({"executions": [execution("a")], "traces": [trace("a")]}))
-    import reports.observability.generate as generator
+    import observability.reports.generate as generator
     monkeypatch.setattr(generator, "ROOT", tmp_path)
     assert main(["--preview", "--output", str(tmp_path / "preview.html")]) == 0
     with pytest.raises(SystemExit):
@@ -134,8 +134,8 @@ def test_duplicates_are_ignored_and_nonfinite_metrics_are_not_serialized():
 
 def test_real_api_client_exports_only_aggregates_using_get(tmp_path, monkeypatch):
     import httpx
-    import data.ai_api as persistence
-    import reports.observability.generate as generator
+    import app.integrations.ai_api as persistence
+    import observability.reports.generate as generator
 
     key = "a" * 24
     calls = []
@@ -161,7 +161,7 @@ def test_real_api_client_exports_only_aggregates_using_get(tmp_path, monkeypatch
 def test_langsmith_uses_trace_totals_excludes_standalone_runs_and_projects_fields():
     import asyncio
     from types import SimpleNamespace as NS
-    from reports.observability.langsmith_source import SELECTS, read_langsmith
+    from observability.reports.langsmith_source import SELECTS, read_langsmith
     begin = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
     end = datetime(2026, 11, 2, 12, 0, 1, tzinfo=timezone.utc)
     def run(key, name, kind, cost, tokens, parents):
@@ -208,7 +208,7 @@ def test_langsmith_uses_trace_totals_excludes_standalone_runs_and_projects_field
 
 def test_failed_model_without_usage_does_not_prove_zero_cost():
     from types import SimpleNamespace as NS
-    from reports.observability.langsmith_source import latency_ms, usage_confirmed
+    from observability.reports.langsmith_source import latency_ms, usage_confirmed
     assert not usage_confirmed(NS(total_cost=0, total_tokens=None, status="error"))
     assert not usage_confirmed(NS(total_cost=0, total_tokens=0, status="error"))
     assert usage_confirmed(NS(total_cost=.01, total_tokens=20, status="error"))
@@ -217,9 +217,9 @@ def test_failed_model_without_usage_does_not_prove_zero_cost():
 
 
 def test_publishing_requires_opt_in_and_does_not_relax_aggregate_privacy(tmp_path, monkeypatch):
-    import reports.observability.generate as generator
+    import observability.reports.generate as generator
     monkeypatch.setattr(generator, "ROOT", tmp_path)
-    monkeypatch.setattr(generator, "TEMPLATE", tmp_path / "reports/observability/index.html")
+    monkeypatch.setattr(generator, "TEMPLATE", tmp_path / "observability/reports/index.html")
     generator.TEMPLATE.parent.mkdir(parents=True)
     generator.TEMPLATE.write_text('<script id="report-data" type="application/json">{}</script>')
     raw = tmp_path / "raw.json"

@@ -5,6 +5,20 @@ LangChain cria os agentes; LangGraph conduz memória → guardrail → roteament
 especialista → juiz. O analista combina indicadores históricos do Databricks
 com os especialistas de estoque e vendas.
 
+## Estrutura
+
+```text
+app/                     API, agentes, grafo, autenticação e memória
+  analyst/               Integração do analista por MCP e A2A
+  integrations/          Clientes PostgreSQL, MongoDB, API Java e Databricks
+  tools/                 Ferramentas dos especialistas
+data/                    PDF e demais arquivos consumidos pela aplicação
+observability/           Traces, métricas e integração LangSmith
+  reports/               Gerador, HTML e recursos do relatório
+  evaluations/           Notebook histórico de avaliação do RAG
+tests/                   Testes offline
+```
+
 ## Preparação
 
 Use Python 3.12. No PowerShell, dentro do projeto:
@@ -76,7 +90,7 @@ execução de notebooks/pipelines ainda não estão implementadas.
 
 ## Modelos e FAQ
 
-Os modelos ficam explícitos em [llms.py](llms.py): `gpt-6-luna`, com temperatura
+Os modelos ficam explícitos em [app/llms.py](app/llms.py): `gpt-6-luna`, com temperatura
 0,6 no chat e 0 no modelo rápido. Um HTTP 429 da OpenAI encaminha somente o passo
 afetado ao Groq (`openai/gpt-oss-120b` no chat e `openai/gpt-oss-20b` no rápido).
 Outros erros são propagados; a próxima chamada tenta OpenAI novamente.
@@ -88,13 +102,13 @@ ausentes são enviados à API, em lotes e sem retentativas automáticas. Preserv
 esse cache na implantação para evitar novas cobranças de indexação; ele não é
 versionado. O índice FAISS é reconstruído em memória a partir dos vetores salvos.
 
-Chunking, recuperação e tamanho dos lotes estão em [config.py](config.py).
+Chunking, recuperação e tamanho dos lotes estão em [app/config.py](app/config.py).
 O resultado 29/30 do notebook antigo foi obtido com E5 e não valida o modelo atual.
 
 ## Executar e testar
 
 ```powershell
-.venv/Scripts/python.exe -m uvicorn api:app --host 127.0.0.1 --port 8000
+.venv/Scripts/python.exe -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
 
 `GET /health` verifica se a aplicação responde. Para o chat autenticado, use
@@ -107,24 +121,24 @@ As rotas `/api/v1/chat/...` são internas e exigem o token de serviço.
 ```powershell
 .venv/Scripts/python.exe -m pytest
 .venv/Scripts/python.exe .github/scripts/validate.py
-.venv/Scripts/python.exe test.py
+.venv/Scripts/python.exe -m app.cli
 ```
 
-Os testes em `tests/` bloqueiam rede e não consomem modelos pagos. `test.py` é um
+Os testes em `tests/` bloqueiam rede e não consomem modelos pagos. `app.cli` é um
 console manual com serviços reais; não representa um login autenticado. A
 validação ponta a ponta depende dos backends, credenciais e contas reais.
 
 ## Observabilidade
 
-O [relatório HTML](reports/observability/index.html) reúne latência, erros,
+O [relatório HTML](observability/reports/index.html) reúne latência, erros,
 custos, resolução e ROI projetado. Para gerar uma nova amostra do LangSmith:
 
 ```powershell
-.venv/Scripts/python.exe -m reports.observability.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
+.venv/Scripts/python.exe -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
 ```
 
 O arquivo é salvo em `.cache/reports/observability.html`. Use `--preview` para
-uma prévia sem rede; `--publish --output reports/observability/index.html`
+uma prévia sem rede; `--publish --output observability/reports/index.html`
 publica somente agregados, sem perguntas, respostas, IDs ou credenciais.
 Custos parciais e premissas de ROI são identificados no relatório.
 

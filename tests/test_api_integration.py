@@ -6,11 +6,12 @@ from bson import ObjectId
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-import api
-from config import settings
-from data.ai_api import AiApiClient, PersistenceError, decode, encode
-from data import memory_store, api_observability
-from data.request_context import chat_context
+import app.api as api
+from app.config import settings
+from app.integrations.ai_api import AiApiClient, PersistenceError, decode, encode
+from app import memory_store
+from observability import api_store as api_observability
+from app.request_context import chat_context
 
 ID = "000000000000000000000001"
 TOKEN = "internal-test-token-with-at-least-32-characters"

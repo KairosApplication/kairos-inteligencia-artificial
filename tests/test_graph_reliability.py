@@ -4,9 +4,9 @@ import pytest
 from bson import ObjectId
 from langchain_core.messages import AIMessage, ToolMessage
 
-import graph_nodes as nodes
-from data.conversation_middleware import MemoryContext
-from schemas import AvaliacaoJuiz
+import app.graph_nodes as nodes
+from app.conversation_middleware import MemoryContext
+from app.schemas import AvaliacaoJuiz
 
 
 @pytest.fixture

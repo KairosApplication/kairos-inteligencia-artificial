@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tools.faq import CachedEmbeddings
+from app.tools.faq import CachedEmbeddings
 
 
 def test_cache_reutiliza_vetores_entre_instancias(tmp_path):
@@ -79,7 +79,7 @@ def test_cache_separa_consulta_de_documento_e_reutiliza_consulta(tmp_path):
 
 def test_busca_faq_informa_fonte_e_pagina(monkeypatch):
     from langchain_core.documents import Document
-    from tools import faq
+    from app.tools import faq
     db = Mock()
     db.max_marginal_relevance_search.return_value = [
         Document(page_content="O repositor confirma a reposição por escaneamento.", metadata={"page": 1})]

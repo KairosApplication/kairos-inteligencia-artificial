@@ -4,9 +4,9 @@ from decimal import Decimal
 
 import pytest
 
-from config import Settings, settings
-from data import postgres
-from tools import clientes, estoque, vendas
+from app.config import Settings, settings
+from app.integrations import postgres
+from app.tools import clientes, estoque, vendas
 
 
 @pytest.mark.parametrize("filters", [{"nome": "   "}, {"cpf": "abc"}, {"email": " "}, {"cpf": "123"}])

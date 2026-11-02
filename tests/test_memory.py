@@ -5,8 +5,8 @@ import pytest
 from bson import ObjectId
 from langchain_core.messages import AIMessage
 
-from data import conversation_middleware as memory
-from data import memory_store, mongodb
+from app import conversation_middleware as memory, memory_store
+from app.integrations import mongodb
 
 
 def conversation(n=20):
