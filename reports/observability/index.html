@@ -772,6 +772,17 @@
             font-weight: 400
         }
 
+        .calculation-actions {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px
+        }
+
+        .calculation-actions .note {
+            margin: 0
+        }
+
         .scenario-cards {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -1447,6 +1458,10 @@
                   placeholder="Informe o custo; zero é permitido"><small>Inclua
                   hospedagem, banco, observabilidade e custos não cobertos pela
                   média.</small></label></div>
+                    <div class="calculation-actions no-print">
+                        <button class="button button--primary" type="submit">Calcular custos</button>
+                        <p class="note">Os resultados também são atualizados ao preencher os campos.</p>
+                    </div>
                 </form>
                 <p class="form-error" id="scenario-error" role="status"></p>
                 <div class="scenario-cards">
@@ -1495,6 +1510,8 @@
                     </h3><span class="badge badge--warm">ROI
               projetado</span></div>
                 <p class="section-subtitle">Estimativa de capacidade de trabalho liberada. Não comprova economia financeira realizada nem redução de rupturas.</p>
+                <p class="note" id="roi-prerequisites">O ROI usa também custo por consulta, consultas por usuário e infraestrutura da seção <a href="#custos">Custos e escala de utilização</a>. Preencha esses três campos antes de calcular.</p>
+                <form id="roi-form" novalidate aria-describedby="roi-prerequisites">
                 <div class="fields" id="roi-fields"><label for="resolution-rate">Taxa
               esperada de resolução · %<input id="resolution-rate" type="number"
                 min="0" max="100" step="any"
@@ -1506,6 +1523,11 @@
                 id="hourly-cost" type="number" min="0" max="1000000" step="any"
                 placeholder="Informe o custo por hora"><small>Todos os custos
                 usam USD, sem conversão automática.</small></label></div>
+                    <div class="calculation-actions no-print">
+                        <button class="button button--primary" type="submit">Calcular ROI</button>
+                        <p class="note">O resultado também é atualizado automaticamente com todas as premissas preenchidas.</p>
+                    </div>
+                </form>
                 <p class="form-error" id="roi-error" role="status"></p>
                 <div class="roi-results">
                     <div><span>ROI · 100 usuários /
@@ -1756,15 +1778,30 @@
             };
         }
 
-        function calculate() {
+        const costFields = {
+            'cost-per-request': 'custo por consulta',
+            'requests-per-user': 'consultas por usuário / semana',
+            'fixed-cost': 'infraestrutura e custos adicionais'
+        };
+        const roiFields = {
+            'resolution-rate': 'taxa esperada de resolução',
+            'minutes-saved': 'minutos economizados por resolução',
+            'hourly-cost': 'custo da hora de trabalho'
+        };
+
+        function calculate(requested = null) {
             const a = assumptions(),
                 inputs = [...$('scenario-form').querySelectorAll('input')];
-            const invalid = inputs.some(input => input.value !== '' && !input.validity.valid);
-            const roiInvalid = [...$('roi-fields').querySelectorAll('input')].some(input => input.value !== '' && !input.validity.valid);
-            text('scenario-error', invalid ? 'Revise as premissas: use valores não negativos e frequência inteira a partir de 1.' : '');
-            text('roi-error', roiInvalid ? 'Revise as premissas: taxa entre 0 e 100% e demais valores não negativos.' : '');
+            const roiInputs = [...$('roi-fields').querySelectorAll('input')];
+            const invalid = inputs.some(input => !input.validity.valid);
+            const roiInvalid = roiInputs.some(input => !input.validity.valid);
+            const missingCosts = Object.keys(costFields).filter(id => inputValue(id) == null);
+            const missingRoi = Object.keys(roiFields).filter(id => inputValue(id) == null);
             const costReady = [a.cost_per_request_usd, a.requests_per_user_week, a.additional_weekly_usd].every(value => value != null);
             const roiReady = costReady && [a.resolution_rate_percent, a.minutes_saved, a.hourly_cost_usd].every(value => value != null);
+            text('scenario-error', invalid ? 'Revise as premissas: use valores não negativos e frequência inteira a partir de 1.' : requested === 'cost' && !costReady ? 'Preencha: ' + missingCosts.map(id => costFields[id]).join(', ') + '.' : '');
+            const roiStarted = roiInputs.some(input => input.value !== '' || input.validity.badInput);
+            text('roi-error', roiInvalid ? 'Revise as premissas: taxa entre 0 e 100% e demais valores não negativos.' : !costReady && (requested === 'roi' || roiStarted) ? 'Para calcular o ROI, preencha ou corrija na seção Custos e escala de utilização: ' + missingCosts.map(id => costFields[id]).join(', ') + '.' : requested === 'roi' && !roiReady ? 'Preencha: ' + missingRoi.map(id => roiFields[id]).join(', ') + '.' : '');
             const observed = baseline != null && a.cost_per_request_usd === baseline;
             text('cost-origin', observed ? 'Média observada das execuções finalizadas com cobertura completa.' : 'Hipótese manual; não representa custo medido.');
             [100, 1000].forEach(users => {
@@ -1777,9 +1814,18 @@
                 text('roi-benefit-' + users, benefit == null ? 'Aguardando premissas de custo e benefício.' : cost === 0 ? 'ROI indefinido: custo operacional igual a zero.' : 'Benefício de tempo estimado: ' + usd(benefit) + '/semana.');
             });
             text('scenario-source', costReady ? 'Base de custo: ' + (observed ? 'média observada' : 'hipótese manual') + '. Infraestrutura e frequência são premissas informadas; não há chamadas pagas nesta simulação.' : 'Informe todas as premissas para calcular os cenários. Campos vazios não são interpretados como zero.');
+            if (requested) {
+                const missing = requested === 'roi' ? [...missingCosts, ...missingRoi] : missingCosts;
+                if (missing.length) $(missing[0]).focus();
+            }
         }
-        document.querySelectorAll('input').forEach(input => input.addEventListener('input', calculate));
-        $('scenario-form').addEventListener('submit', event => event.preventDefault());
+        document.querySelectorAll('input').forEach(input => input.addEventListener('input', () => calculate()));
+        [['scenario-form', 'cost'], ['roi-form', 'roi']].forEach(([id, requested]) => {
+            $(id).addEventListener('submit', event => {
+                event.preventDefault();
+                calculate(requested);
+            });
+        });
         $('print-report').addEventListener('click', () => {
             calculate();
             window.print();
