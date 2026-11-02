@@ -9,11 +9,7 @@ from tools.estoque import ESTOQUE_TOOLS
 from tools.faq import FAQ_TOOLS
 from tools.vendas import VENDAS_TOOLS
 
-# AGENTE ORQUESTRADOR
-# Não recebe tools: sua única função é classificar a intenção do
-# usuário e retornar a rota estruturada (ver schemas.Roteamento) via
-# `response_format`. O roteamento em si é feito pelo LangGraph
-# (ver graph_nodes.decidir_rota), não pelo agente.
+# Classifica a intenção sem tools; o LangGraph aplica a rota estruturada.
 agente_orquestrador = create_agent(
     model=llm_rapido,
     tools=[],
@@ -22,7 +18,6 @@ agente_orquestrador = create_agent(
     middleware=[fallback_middleware(rapido=True)]
 )
 
-# AGENTE FAQ
 agente_faq = create_agent(
     model=llm_rapido,
     tools=FAQ_TOOLS,
@@ -31,7 +26,6 @@ agente_faq = create_agent(
     context_schema=MemoryContext
 )
 
-# AGENTE ESTOQUE
 agente_estoque = create_agent(
     model=llm_principal,
     tools=ESTOQUE_TOOLS,
@@ -40,7 +34,6 @@ agente_estoque = create_agent(
     context_schema=MemoryContext
 )
 
-# AGENTE VENDAS
 agente_vendas = create_agent(
     model=llm_principal,
     tools=VENDAS_TOOLS,
@@ -49,7 +42,6 @@ agente_vendas = create_agent(
     context_schema=MemoryContext
 )
 
-# AGENTE CLIENTES
 agente_clientes = create_agent(
     model=llm_principal,
     tools=CLIENTES_TOOLS,

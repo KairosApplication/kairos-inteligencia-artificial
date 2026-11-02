@@ -42,10 +42,8 @@ def _node_observado(func):
             raise
     return executar
 
-# CONSTRUÇÃO DO GRAFO
 builder = StateGraph(GraphState)
 
-# NODES
 builder.add_node(
     "memoria",
     _node_observado(memoria_node)
@@ -88,7 +86,6 @@ builder.add_node(
 
 builder.add_node("analista", _node_observado(analista_node))
 
-# EDGES
 builder.add_edge(
     START,
     "memoria"
@@ -99,7 +96,6 @@ builder.add_edge(
     "guardrail"
 )
 
-# GUARDRAIL → ORQUESTRADOR ou FIM (bloqueado)
 builder.add_conditional_edges(
     "guardrail",
     decidir_bloqueio,
@@ -109,7 +105,6 @@ builder.add_conditional_edges(
     }
 )
 
-# ORQUESTRADOR → ESPECIALISTA
 builder.add_conditional_edges(
     "orquestrador",
     decidir_rota,
@@ -122,25 +117,21 @@ builder.add_conditional_edges(
     }
 )
 
-# FAQ → JUIZ
 builder.add_edge(
     "faq",
     "juiz"
 )
 
-# ESTOQUE → JUIZ
 builder.add_edge(
     "estoque",
     "juiz"
 )
 
-# VENDAS → JUIZ
 builder.add_edge(
     "vendas",
     "juiz"
 )
 
-# CLIENTES → JUIZ
 builder.add_edge(
     "clientes",
     "juiz"
@@ -148,7 +139,6 @@ builder.add_edge(
 
 builder.add_edge("analista", "juiz")
 
-# JUIZ → FIM ou NOVA TENTATIVA
 builder.add_conditional_edges(
     "juiz",
     decidir_avaliacao,
@@ -162,5 +152,4 @@ builder.add_conditional_edges(
     }
 )
 
-# COMPILAÇÃO
 grafo = builder.compile()

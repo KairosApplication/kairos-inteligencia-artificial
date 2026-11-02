@@ -23,10 +23,7 @@ def _executar_consulta(sql: str, params: dict) -> list:
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
-    """
-    Prepara um valor de texto para busca parcial com ILIKE.
-    Retorna None quando o valor não foi informado.
-    """
+    """Prepara busca parcial com ILIKE; retorna None para texto vazio."""
     if not valor or not valor.strip():
         return None
 
@@ -35,10 +32,7 @@ def _like(valor: Optional[str]) -> Optional[str]:
 
 
 def _normalizar_cpf(cpf: Optional[str]) -> Optional[str]:
-    """
-    Remove qualquer caractere que não seja dígito de um CPF
-    informado, permitindo comparar "123.456.789-00" com "12345678900".
-    """
+    """Mantém apenas os dígitos do CPF para comparação."""
     if not cpf or not cpf.strip():
         return None
 
@@ -54,22 +48,9 @@ def localizar_cliente(
     cpf: Optional[str] = None,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Localiza clientes do Kairos pelo nome completo (ou parte dele),
-    e-mail ou CPF, retornando o identificador do cliente
-    (customer_id) necessário para consultar seu histórico de
-    compras ou ofertas personalizadas.
-
-    Ao menos um dos filtros (nome, email ou cpf) deve ser informado.
-
-    Nunca retorna dados sensíveis como senha.
-
-    Parâmetros:
-        nome: nome ou parte do nome completo do cliente.
-        email: e-mail (ou parte dele) do cliente.
-        cpf: CPF do cliente, com ou sem pontuação.
-        limite: quantidade máxima de clientes retornados.
-    """
+    """Localiza clientes e retorna customer_id para consultar compras/ofertas, sem senhas.
+    Exige nome ou email (aceitam texto parcial) ou cpf (com/sem pontuação).
+    limite define o máximo de clientes."""
     own_id = customer_scope()
     if own_id is not None:
         return f"Seu customer_id é {own_id}. Use-o para consultar suas compras ou ofertas."
@@ -133,23 +114,10 @@ def consultar_historico_compras_cliente(
     dias: Optional[int] = None,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Consulta o histórico de compras concluídas de um cliente
-    específico do Kairos.
-
-    Retorna, por produto comprado pelo cliente: quantidade total,
-    valor total gasto, número de pedidos e a data da compra mais
-    recente, considerando somente compras com status concluído.
-
-    Use a ferramenta localizar_cliente antes para obter o
-    customer_id, caso ainda não o tenha.
-
-    Parâmetros:
-        customer_id: identificador do cliente.
-        dias: últimos N dias confirmados pelo usuário; ausência pede
-            esclarecimento sem consultar o banco.
-        limite: quantidade máxima de produtos retornados.
-    """
+    """Consulta quantidade, gasto, pedidos e compra mais recente por produto de um cliente.
+    Considera apenas compras concluídas. Obtenha customer_id com localizar_cliente se necessário.
+    Confirme dias com o usuário; se ausente, pede esclarecimento sem consultar o banco.
+    limite define o máximo de produtos."""
     dias, aviso = validar_periodo(dias, "dias", settings.historico_clientes_max_dias, "De quantos dias anteriores você quer consultar as compras deste cliente?")
     if aviso:
         return aviso
@@ -217,27 +185,9 @@ def sugerir_ofertas_personalizadas(
     limite: Optional[int] = None,
     dias: Optional[int] = None
 ) -> str:
-    """
-    Sugere promoções atualmente vigentes que sejam relevantes para
-    um cliente específico, com base no histórico de compras dele.
-
-    Uma promoção é considerada relevante quando é vigente na data
-    atual e o produto promovido é o mesmo que o cliente já comprou,
-    ou pertence a uma categoria que o cliente já comprou.
-
-    Esta ferramenta não cria descontos personalizados exclusivos:
-    ela apenas identifica, entre as promoções vigentes cadastradas
-    no sistema, quais fazem sentido para o histórico do cliente.
-
-    Use a ferramenta localizar_cliente antes para obter o
-    customer_id, caso ainda não o tenha.
-
-    Parâmetros:
-        customer_id: identificador do cliente.
-        limite: quantidade máxima de ofertas retornadas.
-        dias: últimos N dias de compras confirmados pelo usuário;
-            se ausente, pede esclarecimento antes de recomendar ofertas.
-    """
+    """Lista promoções vigentes de produtos/categorias comprados pelo cliente; não cria descontos.
+    Obtenha customer_id com localizar_cliente se necessário; limite define o máximo de ofertas.
+    Confirme dias de histórico com o usuário; se ausente, pede esclarecimento antes de consultar."""
     dias, aviso = validar_periodo(
         dias, "dias", settings.historico_clientes_max_dias,
         "As ofertas devem considerar as compras dos últimos quantos dias?",

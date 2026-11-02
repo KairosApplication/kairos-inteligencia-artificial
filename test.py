@@ -7,14 +7,7 @@ from schemas import GraphState
 # FUNÇÃO DE TESTE
 def testar_pergunta(pergunta: str, user_id: int = USUARIO_PADRAO_ID):
 
-    """
-    Executa uma única pergunta pelo grafo.
-
-    O histórico de mensagens e o resumo da conversa do usuário são
-    carregados do MongoDB no início da execução (node "memoria") e
-    persistidos novamente ao final, caracterizando memória de longo
-    prazo entre execuções distintas do chat de teste.
-    """
+    """Executa uma pergunta no grafo com histórico persistido entre turnos."""
 
     estado_inicial: GraphState = {
         "pergunta": pergunta,
@@ -76,16 +69,7 @@ def testar_pergunta(pergunta: str, user_id: int = USUARIO_PADRAO_ID):
 
 
 def solicitar_feedback(resultado: dict) -> None:
-    """
-    Pergunta ao usuário, no chat de teste, se ele deseja avaliar a
-    resposta recebida (nota de 1 a 5 e comentário opcional),
-    persistindo a avaliação na collection `feedback`, vinculada à
-    execução (`execution_id`) que gerou a resposta.
-
-    Não solicita feedback quando a mensagem foi bloqueada pelo
-    Guardrail, já que nesse caso não houve uma resposta de negócio
-    para avaliar.
-    """
+    """Solicita nota e comentário para a execução; ignora mensagens bloqueadas pelo guardrail."""
     if resultado.get("bloqueado") or not resultado.get("execution_id"):
         return
 

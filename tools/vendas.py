@@ -10,9 +10,7 @@ from data.access import require_domain, company_scope
 from tools.query_policy import validar_limite, validar_periodo
 
 
-# Status que representa uma compra efetivamente concluída.
-# IN_PROGRESS e CANCELLED não são consideradas venda para fins de
-# análise de demanda.
+# Demanda considera somente compras concluídas.
 STATUS_VENDA_CONCLUIDA = "COMPLETED"
 
 
@@ -22,10 +20,7 @@ def _executar_consulta(sql: str, params: dict) -> list:
 
 
 def _like(valor: Optional[str]) -> Optional[str]:
-    """
-    Prepara um valor de texto para busca parcial com ILIKE.
-    Retorna None quando o valor não foi informado.
-    """
+    """Prepara busca parcial com ILIKE; retorna None para texto vazio."""
     if not valor or not valor.strip():
         return None
 
@@ -37,16 +32,8 @@ def _serie_semanal_vendas(
     categoria: Optional[str],
     semanas: int
 ) -> list:
-    """
-    Retorna a série semanal contínua de quantidade vendida (compras
-    concluídas) para o período informado, preenchendo com zero as
-    semanas sem venda registrada.
-
-    Cada item da lista retornada é uma tupla
-    (semana, quantidade_vendida, indice_semana), ordenada da semana
-    mais antiga para a mais recente. O índice da semana é utilizado
-    como variável independente na regressão linear.
-    """
+    """Retorna (semana, quantidade, índice) em ordem cronológica para vendas concluídas.
+    Preenche semanas sem vendas com zero; o índice alimenta a regressão."""
     sql = """
         WITH semanas_periodo AS (
             SELECT generate_series(
@@ -97,15 +84,7 @@ def _serie_semanal_vendas(
 
 
 def _regressao_linear(indices: list, valores: list):
-    """
-    Calcula a inclinação e o intercepto de uma regressão linear
-    simples (mínimos quadrados) sobre os pontos informados, utilizando
-    statistics.linear_regression da biblioteca padrão do Python.
-
-    Retorna (None, None) quando não há pontos suficientes ou quando
-    todos os índices são iguais (variância nula em x, o que tornaria
-    o cálculo indefinido).
-    """
+    """Retorna (inclinação, intercepto), ou (None, None) sem pontos suficientes/variância em x."""
     try:
         resultado = statistics.linear_regression(indices, valores)
 
@@ -118,22 +97,8 @@ def _regressao_linear(indices: list, valores: list):
 def _erro_padrao_inclinacao(
     indices: list, valores: list, inclinacao: float, intercepto: float
 ) -> Optional[float]:
-    """
-    Calcula o erro padrão da inclinação de uma regressão linear
-    simples, a partir dos resíduos observados na própria série
-    (dispersão real dos pontos em torno da reta ajustada).
-
-    Esse valor mede o quanto a inclinação estimada pode variar
-    por acaso, dado o ruído característico desta série específica;
-    é a base para `_classificar_tendencia` decidir se a inclinação
-    observada é grande o suficiente, em relação ao próprio ruído da
-    série, para ser chamada de tendência (em vez de comparar contra
-    um percentual fixo arbitrário).
-
-    Retorna None quando não há graus de liberdade suficientes (menos
-    de 3 pontos) ou quando os índices não variam (nesse caso
-    `_regressao_linear` já teria retornado None).
-    """
+    """Estima o erro padrão da inclinação pelos resíduos da série.
+    Retorna None com menos de três pontos ou sem variância em x."""
     n = len(indices)
 
     if n < 3:
@@ -149,8 +114,7 @@ def _erro_padrao_inclinacao(
         (y - (intercepto + inclinacao * x)) ** 2 for x, y in zip(indices, valores)
     )
 
-    # Variância residual (erro quadrático médio), com n-2 graus de
-    # liberdade (dois parâmetros estimados: inclinação e intercepto).
+    # n-2 graus de liberdade: inclinação e intercepto foram estimados.
     variancia_residual = soma_quadrados_residuos / (n - 2)
 
     return (variancia_residual / soma_quadrados_x) ** 0.5
@@ -159,17 +123,8 @@ def _erro_padrao_inclinacao(
 def _classificar_tendencia(
     inclinacao: Optional[float], erro_padrao: Optional[float]
 ) -> str:
-    """
-    Classifica a tendência de vendas com base na inclinação da reta
-    de regressão linear sobre a série semanal, julgada em relação ao
-    seu próprio erro padrão (ver `_erro_padrao_inclinacao`) — ou
-    seja, em relação ao ruído real observado nesta série específica,
-    em vez de um percentual fixo arbitrário aplicado a todo produto
-    ou categoria indistintamente.
-
-    Quando o erro padrão não pôde ser calculado (série muito curta),
-    cai no critério mais simples de sinal da inclinação.
-    """
+    """Classifica a inclinação em relação ao seu erro padrão.
+    Sem erro padrão calculável, usa o sinal da inclinação."""
     if inclinacao is None:
         return "indefinida"
 
@@ -183,16 +138,10 @@ def _classificar_tendencia(
             return "estável"
         return "crescimento" if inclinacao > 0 else "queda"
 
-    # Estatística de teste: quantos erros padrão a inclinação
-    # observada está distante de zero. Abaixo do limiar de
-    # significância, a inclinação não é distinguível de ruído.
+    # Distância da inclinação a zero, medida em erros padrão.
     estatistica_t = inclinacao / erro_padrao
 
-    # 1.96 é o múltiplo convencional de erro padrão para um teste de
-    # significância aproximado a ~95% de confiança (distribuição
-    # normal), não um valor calibrado nos dados do Kairos: a
-    # dispersão real da série (quem de fato varia de produto para
-    # produto) já foi incorporada no cálculo de `erro_padrao`.
+    # Aproximação normal de 95%; a dispersão da série já está no erro padrão.
     if abs(estatistica_t) < 1.96:
         return "estável"
 
@@ -206,21 +155,9 @@ def consultar_historico_vendas(
     dias: Optional[int] = None,
     limite: Optional[int] = None
 ) -> str:
-    """
-    Consulta o histórico de vendas concluídas do Kairos em um
-    período recente.
-
-    Retorna, por produto, a quantidade total vendida, o valor total
-    em vendas e o número de pedidos distintos que incluíram o
-    produto, considerando somente compras com status concluído.
-
-    Parâmetros:
-        produto: filtra pelo nome (ou parte do nome) do produto.
-        categoria: filtra pela categoria (ou parte do nome) do produto.
-        dias: últimos N dias, conforme pedido do usuário; se ausente,
-            pede esclarecimento sem consultar o banco.
-        limite: quantidade máxima de produtos retornados.
-    """
+    """Consulta quantidade, receita e pedidos por produto em vendas concluídas nos últimos dias.
+    produto e categoria aceitam nomes parciais; limite define o máximo de produtos.
+    dias deve vir do usuário; se ausente, pede esclarecimento sem consultar o banco."""
     dias, aviso = validar_periodo(dias, "dias", settings.historico_vendas_max_dias, "De quantos dias anteriores você quer consultar as vendas?")
     if aviso:
         return aviso
@@ -283,20 +220,9 @@ def analisar_tendencia_vendas(
     categoria: Optional[str] = None,
     semanas: Optional[int] = None
 ) -> str:
-    """
-    Analisa a tendência de vendas de um produto ou categoria ao
-    longo das últimas semanas, com base em regressão linear simples
-    sobre a série semanal de quantidade vendida (compras concluídas).
-
-    Retorna a série semanal encontrada, a média semanal de vendas e
-    a classificação da tendência (crescimento, queda ou estável).
-
-    Parâmetros:
-        produto: filtra pelo nome (ou parte do nome) do produto.
-        categoria: filtra pela categoria (ou parte do nome) do produto.
-        semanas: semanas completas anteriores, conforme pedido do usuário;
-            se ausente, pede esclarecimento sem consultar o banco.
-    """
+    """Analisa vendas concluídas por regressão linear; retorna série, média semanal e tendência.
+    produto e categoria aceitam nomes parciais; semanas são semanas completas anteriores.
+    Confirme semanas com o usuário; se ausente, pede esclarecimento sem consultar o banco."""
     semanas, aviso = validar_periodo(
         semanas, "semanas", settings.tendencia_max_semanas,
         "Quantas semanas completas você quer analisar?", minimo=3,
@@ -353,25 +279,10 @@ def prever_demanda_futura(
     semanas_historico: Optional[int] = None,
     semanas_previsao: Optional[int] = None
 ) -> str:
-    """
-    Projeta a quantidade de vendas esperada para as próximas semanas,
-    extrapolando a reta de regressão linear calculada sobre o
-    histórico semanal de vendas concluídas.
-
-    Esta é uma projeção estatística simples (extrapolação linear),
-    e não um modelo de previsão de demanda avançado. Deve ser
-    apresentada como uma estimativa aproximada baseada apenas na
-    tendência recente, sem considerar sazonalidade, promoções
-    futuras ou eventos externos.
-
-    Parâmetros:
-        produto: filtra pelo nome (ou parte do nome) do produto.
-        categoria: filtra pela categoria (ou parte do nome) do produto.
-        semanas_historico: semanas completas de histórico confirmadas
-            pelo usuário; não invente um valor quando ausente.
-        semanas_previsao: semanas futuras confirmadas pelo usuário;
-            ambos os períodos são necessários antes de consultar o banco.
-    """
+    """Estima vendas futuras por extrapolação linear do histórico de compras concluídas.
+    É uma aproximação sem sazonalidade, promoções futuras ou eventos externos.
+    produto e categoria aceitam nomes parciais. Confirme semanas_historico (completas)
+    e semanas_previsao com o usuário; não invente períodos nem consulte sem ambos."""
     semanas_historico, aviso_historico = validar_periodo(
         semanas_historico, "semanas", settings.tendencia_max_semanas,
         "Quantas semanas completas de histórico devemos usar na previsão?", minimo=2,
