@@ -32,6 +32,7 @@ def test_report_keeps_error_block_and_rejection_separate_and_costs_once():
     assert report["cost"]["complete_usd"] == .1
     assert report["cost"]["mean_request_usd"] == .025
     assert report["resolution"]["cost_usd"] == .1
+    assert report["resolution"]["minimum_cost_usd"] is None
     assert report["resolution"]["source"] == "manual"
 
 
@@ -43,6 +44,24 @@ def test_incomplete_cost_has_no_automatic_projection_or_resolution_cost():
     assert report["cost"]["mean_request_usd"] is None
     assert report["cost"]["complete_usd"] is None
     assert report["resolution"]["cost_usd"] is None
+    assert report["resolution"]["minimum_cost_usd"] == .03
+
+
+def test_resolution_cost_uses_partial_cost_as_lower_bound_and_never_divides_by_zero():
+    records = [execution("a", cost=.04), execution("b", cost=None, complete=False)]
+    measured = [trace("a"), trace("b")]
+    report = build_report(records, measured, confirmed_resolutions=2)
+    assert report["resolution"]["cost_usd"] is None
+    assert report["resolution"]["minimum_cost_usd"] == .025
+    for confirmed in [None, 0]:
+        resolution = build_report(records, measured, confirmed_resolutions=confirmed)["resolution"]
+        assert resolution["cost_usd"] is None
+        assert resolution["minimum_cost_usd"] is None
+    unknown = execution("c", cost=None, complete=False)
+    unknown["knownCostUsd"] = None
+    resolution = build_report([unknown], [trace("c")], confirmed_resolutions=1)["resolution"]
+    assert resolution["cost_usd"] is None
+    assert resolution["minimum_cost_usd"] is None
 
 
 def test_empty_cost_or_legacy_zero_does_not_mean_free_usage():

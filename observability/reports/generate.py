@@ -188,7 +188,9 @@ def build_report(executions, traces, *, start=None, end=None, source="preview",
         "resolution": {"confirmed": confirmed_resolutions,
                        "source": "manual" if confirmed_resolutions is not None else None,
                        "cost_usd": (round(complete_cost / confirmed_resolutions, 8)
-                                    if full_cost and confirmed_resolutions else None)},
+                                    if full_cost and confirmed_resolutions else None),
+                       "minimum_cost_usd": (round(known_cost / confirmed_resolutions, 8)
+                                            if not full_cost and known_available and confirmed_resolutions else None)},
         "daily": [{"day": day, "requests": metric["requests"], "errors": metric["errors"],
                    "mean_ms": stats(metric["latencies"])["mean"]} for day, metric in sorted(daily.items())],
         "quality": {"invalid_dates": invalid_dates, "duplicates_ignored": duplicates},
