@@ -751,6 +751,10 @@
             gap: 7px
         }
 
+        .fields--two {
+            grid-template-columns: repeat(2, minmax(0, 1fr))
+        }
+
         .fields input {
             width: 100%;
             min-height: 42px;
@@ -1485,20 +1489,35 @@
         <section class="section" id="resolucao" aria-labelledby="resolution-title">
             <div class="section-title">
                 <h2 id="resolution-title"><span class="section-index">04</span>Custo por resolução</h2><span class="badge">KAIROS-133</span></div>
-            <div class="two-cols equal-cols">
-                <article class="card">
-                    <h3>Custo por resolução confirmada</h3>
-                    <div class="resolution-value" id="resolution-cost">—</div>
-                    <p class="note" id="resolution-description">Aguardando confirmação de resolução e custos completos.</p>
-                </article>
-                <article class="card">
-                    <h3>O que conta como resolução?</h3>
-                    <p class="small muted">Uma solicitação que o usuário ou responsável confirmou como resolvida. Aprovação do juiz e nota de satisfação, isoladamente, não confirmam esse resultado.
-                    </p>
-                    <div class="formula">Custo por resolução = custo completo de todas as execuções finalizadas ÷ resoluções confirmadas.
+            <article class="card">
+                <h3>Resoluções confirmadas no período</h3>
+                <p class="section-subtitle">Informe quantas solicitações o usuário ou responsável confirmou como resolvidas. Aprovação do juiz e nota de satisfação, isoladamente, não confirmam esse resultado.</p>
+                <p class="note" id="resolution-coverage"></p>
+                <form id="resolution-form" novalidate aria-describedby="resolution-coverage">
+                    <div class="fields fields--two">
+                        <label for="confirmed-resolutions">Resoluções confirmadas<input id="confirmed-resolutions" type="number" min="0" step="1" placeholder="Informe a contagem verificada"><small id="resolution-count-note">Use somente solicitações desta amostra.</small></label>
+                        <label for="resolution-total-cost">Custo total verificado do período · USD<input id="resolution-total-cost" type="number" min="0" max="1000000000000" step="any" placeholder="Opcional se os custos estiverem incompletos"><small>Inclua os custos de todas as execuções finalizadas, inclusive falhas. Informe somente valores verificados do mesmo período; este campo não é uma hipótese de projeção.</small></label>
                     </div>
-                </article>
-            </div>
+                    <div class="calculation-actions no-print">
+                        <button class="button button--primary" type="submit">Calcular custo por resolução</button>
+                        <p class="note">O resultado também é atualizado ao preencher os campos.</p>
+                    </div>
+                </form>
+                <p class="form-error" id="resolution-error" role="status"></p>
+                <div class="scenario-cards">
+                    <div class="scenario">
+                        <h3>Custo por resolução confirmada</h3>
+                        <div class="resolution-value" id="resolution-cost">—</div>
+                        <p class="note" id="resolution-description">Informe a contagem de resoluções confirmadas.</p>
+                    </div>
+                    <div class="scenario">
+                        <h3>Mínimo com o custo conhecido</h3>
+                        <div class="resolution-value" id="resolution-minimum-cost">—</div>
+                        <p class="note" id="resolution-minimum-description">Se o custo estiver parcial, este limite inferior não representa o custo completo por resolução.</p>
+                    </div>
+                </div>
+                <div class="formula">Custo por resolução = custo completo de todas as execuções finalizadas ÷ resoluções confirmadas. Com custo parcial, calcula-se somente o mínimo conhecido. Com zero resoluções, o custo por resolução é indefinido.</div>
+            </article>
         </section>
         <section class="section" id="roi" aria-labelledby="roi-title">
             <div class="section-title">
@@ -1578,15 +1597,15 @@
                 <details class="no-print">
                     <summary>Como gerar um relatório com as métricas reais</summary>
                     <p>Para consultar diretamente o LangSmith, use LANGSMITH_API_KEY, LANGSMITH_PROJECT e, quando necessário, LANGSMITH_ENDPOINT no ambiente privado. A consulta solicita somente campos técnicos, sem conteúdo das conversas:</p>
-                    <pre>.\.venv\Scripts\python.exe -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD</pre>
+                    <pre>python -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD</pre>
                     <p>O recorte considera somente traces raiz chamadas LangGraph; chamadas isoladas de modelo não viram consultas do chatbot. Pode-se ajustar <code>--graph-name</code> se o nome do grafo mudar. Custos totais vêm dos agregados de traces do LangSmith; custos de pais e filhos não são somados novamente.</p>
                     <p>Na raiz do repositório, com AI_API_URL e AI_API_TOKEN configurados no ambiente privado, execute substituindo as datas:
-                    </p><pre>.\.venv\Scripts\python.exe -m observability.reports.generate --from-api --start AAAA-MM-DD --end AAAA-MM-DD</pre>
+                    </p><pre>python -m observability.reports.generate --from-api --start AAAA-MM-DD --end AAAA-MM-DD</pre>
                     <p>O arquivo é salvo em <code>.cache/reports/observability.html</code>, fora do versionamento. O modo de leitura usa somente GET na API Java, sem alterar dados. Como a API atual não filtra datas no servidor, a leitura é paginada e limitada
                         por recurso; atingir o teto aborta a geração, sem publicar uma amostra truncada. Pode-se ajustar <code>--max-records</code> conforme o volume.</p>
                     <p>Para publicar os indicadores agregados no repositório, use explicitamente <code>--publish --output observability/reports/index.html</code>. Credenciais e conteúdo das conversas continuam excluídos; a saída privada permanece como padrão.</p>
                     <p>Para declarar uma contagem previamente verificada de resoluções no período, acrescente <code>--confirmed-resolutions
-                QUANTIDADE</code>. A origem manual será identificada no relatório. A leitura por <code>--input arquivo.json</code> aceita uma exportação privada com listas <code>executions</code> e
+                QUANTIDADE</code>, ou preencha a seção Custo por resolução neste navegador. Entradas no navegador são locais e entram na impressão e exportação; não alteram o snapshot publicado nem a base de dados. A origem manual será identificada no relatório. A leitura por <code>--input arquivo.json</code> aceita uma exportação privada com listas <code>executions</code> e
                         <code>traces</code>.</p>
                 </details>
             </article>
@@ -1596,7 +1615,7 @@
           observados e projeções apresentados separadamente ·
           USD</span></footer>
     </main>
-    <script id="report-data" type="application/json">{"schema_version": 1, "generated_at": "2026-11-02T15:46:06.472301+00:00", "source": "langsmith", "period": {"start": "2026-11-02", "end": "2026-11-02", "timezone": "America/Sao_Paulo"}, "counts": {"requests": 11, "finished": 11, "success": 7, "errors": 4, "blocked": null, "rejected": null, "in_progress": 0, "unknown": 0, "error_rate": 0.36363636363636365}, "latency": {"graph_ms": {"count": 11, "mean": 7830.333, "p50": 8669.708, "p95": 15825.921}, "handoff_ms": {"count": 35, "mean": 0.649, "p50": 0.954, "p95": 1.528}, "agents": [{"name": "Clientes", "calls": 1, "errors": 0, "count": 1, "mean": 2391.102, "p50": 2391.102, "p95": 2391.102}, {"name": "Estoque", "calls": 2, "errors": 0, "count": 2, "mean": 4168.21, "p50": 4168.21, "p95": 4560.93}, {"name": "FAQ", "calls": 3, "errors": 1, "count": 3, "mean": 5125.001, "p50": 5696.42, "p95": 6709.509}, {"name": "Guardrail", "calls": 11, "errors": 2, "count": 11, "mean": 1733.395, "p50": 1531.935, "p95": 3164.338}, {"name": "Juiz", "calls": 7, "errors": 0, "count": 7, "mean": 2281.711, "p50": 1904.613, "p95": 3249.529}, {"name": "Contexto e memória", "calls": 11, "errors": 0, "count": 11, "mean": 56.008, "p50": 51.606, "p95": 77.653}, {"name": "Orquestrador", "calls": 9, "errors": 1, "count": 9, "mean": 1704.393, "p50": 1175.314, "p95": 4992.353}, {"name": "Vendas", "calls": 2, "errors": 0, "count": 2, "mean": 4310.063, "p50": 4310.063, "p95": 5333.213}]}, "cost": {"known_usd": 0.00835413, "complete_usd": null, "complete_executions": 3, "coverage": 0.2727272727272727, "mean_request_usd": null}, "resolution": {"confirmed": null, "source": null, "cost_usd": null}, "daily": [{"day": "2026-11-02", "requests": 11, "errors": 4, "mean_ms": 7830.333}], "quality": {"invalid_dates": 0, "duplicates_ignored": 0}, "telemetry": {"model_calls": 70, "known_tokens": 83399, "calls_with_tokens": 46, "outcomes_available": false, "collection_mode": "manual_graph_mongodb", "local_embeddings_preloaded": true, "manual_validation": {"scenarios": 7, "approved_scenarios": 7, "successful_tool_calls": 8, "attempts": 10}}}</script>
+    <script id="report-data" type="application/json">{"schema_version": 1, "generated_at": "2026-11-02T15:46:06.472301+00:00", "source": "langsmith", "period": {"start": "2026-11-02", "end": "2026-11-02", "timezone": "America/Sao_Paulo"}, "counts": {"requests": 11, "finished": 11, "success": 7, "errors": 4, "blocked": null, "rejected": null, "in_progress": 0, "unknown": 0, "error_rate": 0.36363636363636365}, "latency": {"graph_ms": {"count": 11, "mean": 7830.333, "p50": 8669.708, "p95": 15825.921}, "handoff_ms": {"count": 35, "mean": 0.649, "p50": 0.954, "p95": 1.528}, "agents": [{"name": "Clientes", "calls": 1, "errors": 0, "count": 1, "mean": 2391.102, "p50": 2391.102, "p95": 2391.102}, {"name": "Estoque", "calls": 2, "errors": 0, "count": 2, "mean": 4168.21, "p50": 4168.21, "p95": 4560.93}, {"name": "FAQ", "calls": 3, "errors": 1, "count": 3, "mean": 5125.001, "p50": 5696.42, "p95": 6709.509}, {"name": "Guardrail", "calls": 11, "errors": 2, "count": 11, "mean": 1733.395, "p50": 1531.935, "p95": 3164.338}, {"name": "Juiz", "calls": 7, "errors": 0, "count": 7, "mean": 2281.711, "p50": 1904.613, "p95": 3249.529}, {"name": "Contexto e memória", "calls": 11, "errors": 0, "count": 11, "mean": 56.008, "p50": 51.606, "p95": 77.653}, {"name": "Orquestrador", "calls": 9, "errors": 1, "count": 9, "mean": 1704.393, "p50": 1175.314, "p95": 4992.353}, {"name": "Vendas", "calls": 2, "errors": 0, "count": 2, "mean": 4310.063, "p50": 4310.063, "p95": 5333.213}]}, "cost": {"known_usd": 0.00835413, "complete_usd": null, "complete_executions": 3, "coverage": 0.2727272727272727, "mean_request_usd": null}, "resolution": {"confirmed": null, "source": null, "cost_usd": null, "minimum_cost_usd": null}, "daily": [{"day": "2026-11-02", "requests": 11, "errors": 4, "mean_ms": 7830.333}], "quality": {"invalid_dates": 0, "duplicates_ignored": 0}, "telemetry": {"model_calls": 70, "known_tokens": 83399, "calls_with_tokens": 46, "outcomes_available": false, "collection_mode": "manual_graph_mongodb", "local_embeddings_preloaded": true, "manual_validation": {"scenarios": 7, "approved_scenarios": 7, "successful_tool_calls": 8, "attempts": 10}}}</script>
     <script>
         'use strict';
         const report = JSON.parse(document.getElementById('report-data').textContent);
@@ -1606,7 +1625,7 @@
             style: 'currency',
             currency: 'USD',
             minimumFractionDigits: 2,
-            maximumFractionDigits: 6
+            maximumFractionDigits: 8
         }).format(value);
         const pct = value => value == null ? '—' : new Intl.NumberFormat('pt-BR', {
             style: 'percent',
@@ -1682,10 +1701,12 @@
                 $('agents-body').append(row);
             });
         }
-        if (report.resolution.confirmed != null) {
-            text('resolution-cost', usd(report.resolution.cost_usd));
-            text('resolution-description', integer(report.resolution.confirmed) + ' resoluções declaradas pelo responsável. ' + (report.resolution.cost_usd == null ? 'Cálculo exige custos completos e ao menos uma resolução.' : 'Contagem manual verificada; não inferida pelo juiz.'));
-        }
+        $('confirmed-resolutions').max = counts.success;
+        if (report.resolution.confirmed != null) $('confirmed-resolutions').value = report.resolution.confirmed;
+        if (report.cost.complete_usd != null) $('resolution-total-cost').value = report.cost.complete_usd;
+        if (report.cost.known_usd != null) $('resolution-total-cost').min = report.cost.known_usd;
+        text('resolution-coverage', 'Custo conhecido: ' + usd(report.cost.known_usd) + '. Custos completos em ' + integer(report.cost.complete_executions) + ' de ' + integer(counts.finished) + ' execuções finalizadas (' + pct(report.cost.coverage) + '). Valores desta seção usam o período da amostra, não o cenário semanal.');
+        text('resolution-count-note', 'Limite desta amostra: ' + integer(counts.success) + (report.source === 'langsmith' ? ' execuções sem falha técnica. Essa contagem não confirma resolução automaticamente.' : ' respostas aprovadas. Confirme o resultado com o usuário ou responsável.'));
         text('sample-description', preview ? 'A prévia não contém execuções reais.' : integer(counts.requests) + ' execuções na amostra; ' + integer(counts.finished) + ' finalizadas. Custos completos em ' + integer(report.cost.complete_executions) + ' execuções finalizadas (' + pct(report.cost.coverage) + ').');
         text('quality-description', integer(report.quality.invalid_dates) + ' registros sem data válida excluídos da leitura; ' + integer(report.quality.duplicates_ignored) + ' registros duplicados ignorados. Dados ausentes não são convertidos em resultado zero.');
 
@@ -1778,6 +1799,68 @@
             };
         }
 
+        function calculateResolution(requested = false) {
+            const countInput = $('confirmed-resolutions');
+            const costInput = $('resolution-total-cost');
+            const confirmed = inputValue('confirmed-resolutions');
+            const enteredCost = inputValue('resolution-total-cost');
+            const totalCost = enteredCost ?? report.cost.complete_usd;
+            const invalid = !countInput.validity.valid || !costInput.validity.valid;
+            const costEntered = costInput.value.trim() !== '';
+            const result = {
+                confirmed: invalid ? null : confirmed,
+                count_source: confirmed == null || invalid ? null : 'manual',
+                total_cost_usd: invalid ? null : totalCost,
+                cost_source: invalid || totalCost == null ? null : report.cost.complete_usd != null && totalCost === report.cost.complete_usd ? 'observed' : 'manual',
+                cost_usd: null,
+                minimum_cost_usd: null,
+                status: 'missing_resolutions'
+            };
+            let description = 'Informe a contagem de resoluções confirmadas.';
+            let minimumDescription = 'O mínimo conhecido usa somente custos já disponíveis; não substitui o custo completo.';
+            let error = '';
+            if (invalid) {
+                result.status = 'invalid';
+                description = 'Revise os dados para calcular.';
+                error = !countInput.validity.valid
+                    ? 'Informe uma quantidade inteira de resoluções entre 0 e ' + integer(counts.success) + '.'
+                    : 'Informe um custo total válido, não negativo e igual ou superior ao custo já conhecido (' + usd(report.cost.known_usd) + ').';
+            } else if (confirmed === 0) {
+                result.status = 'no_resolutions';
+                description = 'Zero resoluções confirmadas: o custo por resolução é indefinido.';
+                minimumDescription = 'Não é possível dividir o custo por zero resoluções.';
+            } else if (confirmed != null) {
+                if (totalCost != null) {
+                    result.status = 'complete';
+                    result.cost_usd = totalCost / confirmed;
+                    description = integer(confirmed) + ' resoluções declaradas; custo total ' + (result.cost_source === 'observed' ? 'observado' : 'verificado e declarado pelo responsável') + ': ' + usd(totalCost) + '. Inclui todas as execuções finalizadas, inclusive falhas.';
+                    minimumDescription = 'Custo total disponível; use o valor completo ao lado.';
+                } else if (report.cost.known_usd != null) {
+                    result.status = 'partial';
+                    result.minimum_cost_usd = report.cost.known_usd / confirmed;
+                    description = 'Custo incompleto. Informe o custo total verificado do período para calcular o valor completo.';
+                    minimumDescription = usd(report.cost.known_usd) + ' de custo conhecido ÷ ' + integer(confirmed) + ' resoluções. O custo completo pode ser maior.';
+                } else {
+                    result.status = 'missing_cost';
+                    description = 'Sem custo medido. Informe o custo total verificado do período.';
+                    minimumDescription = 'Ainda não há custo conhecido para calcular um limite inferior.';
+                }
+            } else if (requested) {
+                error = 'Informe a quantidade de resoluções confirmadas no período.';
+            }
+            text('resolution-cost', usd(result.cost_usd));
+            text('resolution-minimum-cost', result.minimum_cost_usd == null ? '—' : '≥ ' + usd(result.minimum_cost_usd));
+            text('resolution-description', description);
+            text('resolution-minimum-description', minimumDescription);
+            text('resolution-error', error);
+            if (requested && (invalid || confirmed == null)) {
+                (!countInput.validity.valid || confirmed == null ? countInput : costInput).focus();
+            } else if (requested && confirmed > 0 && totalCost == null && !costEntered) {
+                costInput.focus();
+            }
+            return result;
+        }
+
         const costFields = {
             'cost-per-request': 'custo por consulta',
             'requests-per-user': 'consultas por usuário / semana',
@@ -1819,7 +1902,14 @@
                 if (missing.length) $(missing[0]).focus();
             }
         }
-        document.querySelectorAll('input').forEach(input => input.addEventListener('input', () => calculate()));
+        document.querySelectorAll('input').forEach(input => input.addEventListener('input', () => {
+            calculate();
+            calculateResolution();
+        }));
+        $('resolution-form').addEventListener('submit', event => {
+            event.preventDefault();
+            calculateResolution(true);
+        });
         [['scenario-form', 'cost'], ['roi-form', 'roi']].forEach(([id, requested]) => {
             $(id).addEventListener('submit', event => {
                 event.preventDefault();
@@ -1828,11 +1918,13 @@
         });
         $('print-report').addEventListener('click', () => {
             calculate();
+            calculateResolution();
             window.print();
         });
         $('export-data').addEventListener('click', () => {
             const snapshot = {
                 report,
+                resolution_calculation: calculateResolution(),
                 scenario_assumptions: assumptions(),
                 cost_basis: baseline != null && inputValue('cost-per-request') === baseline ? 'observed' : 'manual',
                 exported_at: new Date().toISOString()
@@ -1851,6 +1943,7 @@
             link.setAttribute('aria-current', 'location');
         }));
         calculate();
+        calculateResolution();
     </script>
 </body>
 

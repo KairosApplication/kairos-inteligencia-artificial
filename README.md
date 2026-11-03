@@ -141,7 +141,10 @@ validação ponta a ponta depende dos backends, credenciais e contas reais.
 ## Observabilidade
 
 O [relatório HTML](observability/reports/index.html) reúne latência, erros,
-custos, resolução e ROI projetado. Para gerar uma nova amostra do LangSmith:
+custos, resolução e ROI projetado. A seção Custo por resolução permite informar
+resoluções confirmadas e custo total verificado do período. Com custos parciais,
+mostra somente o mínimo conhecido; as entradas locais acompanham a impressão e
+a exportação, sem alterar a base. Para gerar uma nova amostra do LangSmith:
 
 ```powershell
 python -m observability.reports.generate --from-langsmith --start AAAA-MM-DD --end AAAA-MM-DD
