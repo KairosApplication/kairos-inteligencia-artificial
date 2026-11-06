@@ -1,4 +1,4 @@
-"""Reutiliza a sessão Spring no desktop e ID tokens Firebase no mobile."""
+"""Valida sessões e tokens Spring; mantém suporte aos ID tokens Firebase legados."""
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -37,7 +37,7 @@ def verify_analyst_token(token):
     return Principal(user_id, "MANAGER", company_id=company_id)
 
 
-def spring_identity(request):
+def spring_origin():
     base = settings.spring_auth_url
     if not base:
         raise HTTPException(503, "Autenticação desktop não configurada.")
@@ -46,6 +46,30 @@ def spring_identity(request):
             or parsed.query or parsed.fragment or parsed.path not in {"", "/"}
             or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})):
         raise HTTPException(503, "Origem da autenticação inválida.")
+    return base.rstrip("/")
+
+
+def spring_bearer_identity(token):
+    base = spring_origin()
+    try:
+        # Spring validates its own access token and identity; never trust locally decoded claims.
+        with httpx.Client(timeout=settings.ai_api_timeout_seconds, trust_env=False, follow_redirects=False) as client:
+            response = client.get(base + "/api/v1/auth/me",
+                                  headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+        if response.status_code in {401, 403}:
+            raise HTTPException(response.status_code, "Sessão Kairos inválida ou sem acesso.")
+        if response.status_code != 200:
+            raise HTTPException(503, "Autenticação Kairos indisponível.")
+        data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("email"), str) or not data["email"].strip():
+            raise ValueError("Identidade ausente")
+        return data["email"]
+    except (httpx.HTTPError, ValueError, TypeError):
+        raise HTTPException(503, "Autenticação Kairos indisponível.") from None
+
+
+def spring_identity(request):
+    base = spring_origin()
     cookie_names = {settings.spring_session_cookie_name, "KAIROS_ACCESS", "KAIROS_REFRESH", "KAIROS_CSRF"}
     cookies = {name: value for name, value in request.cookies.items() if name in cookie_names}
     csrf = request.headers.get("x-csrf-token")
@@ -145,7 +169,16 @@ def authenticated_user(request: Request):
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token or len(token) > 16384:
             raise HTTPException(401, "Credencial inválida.")
-        email = firebase_identity(token)
+        if settings.spring_auth_url:
+            try:
+                email = spring_bearer_identity(token)
+            except HTTPException as error:
+                # Legacy Firebase remains opt-in. Network/server failures never authorize a fallback.
+                if error.status_code != 401 or not settings.firebase_project_id:
+                    raise
+                email = firebase_identity(token)
+        else:
+            email = firebase_identity(token)
     else:
         email = spring_identity(request)
     try:

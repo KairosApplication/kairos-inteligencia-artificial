@@ -117,6 +117,24 @@ O resultado 29/30 do notebook antigo foi obtido com E5 e não valida o modelo at
 
 ## Executar e testar
 
+### Autenticação do aplicativo Android
+
+O Android usa o token Bearer emitido pelo Spring Boot. Configure no Render
+`SPRING_AUTH_URL=https://d3bmuckfmecew.cloudfront.net`, sem caminho ou barra de API.
+O chatbot valida esse token por `GET /api/v1/auth/me` no Spring e consulta os
+vínculos e permissões no PostgreSQL. Não é necessário converter a sessão para
+Firebase, compartilhar cookies do navegador ou enviar CPF e data de nascimento.
+
+Após publicar esta versão, valide uma conta de repositor em
+`GET /api/v1/me/chat` e na listagem de conversas. O histórico mobile também depende
+da configuração existente de `PERSISTENCE_BACKEND=api`, `AI_API_URL` e
+`AI_API_TOKEN` no servidor; mantenha o token de serviço somente no ambiente privado.
+`GET /health` sozinho não confirma autenticação, persistência ou acesso ao modelo.
+
+ID tokens Firebase legados continuam aceitos quando `FIREBASE_PROJECT_ID` estiver
+configurado. Falhas de rede ou indisponibilidade do Spring não liberam acesso.
+O fluxo web de sessão e CSRF permanece separado da validação Bearer.
+
 ```powershell
 python -m uvicorn app.api:app --host 127.0.0.1 --port 8000
 ```
